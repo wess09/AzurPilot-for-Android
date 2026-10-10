@@ -720,7 +720,7 @@ fun AdvancedSettingsPage(
 ) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
-    val isDeviceSecure = remember(context) { appLockManager.isDeviceSecure(context) }
+    val canAuthenticate = appLockManager.canAuthenticate(context)
 
     SettingsSubPage(titleRes = R.string.settings_cat_advanced, onBack = onBack, modifier = modifier) {
         AppCard {
@@ -738,8 +738,9 @@ fun AdvancedSettingsPage(
                 trailing = {
                     Switch(
                         checked = state.appLockEnabled,
+                        enabled = state.appLockEnabled || canAuthenticate,
                         onCheckedChange = { targetEnabled ->
-                            if (!targetEnabled && isDeviceSecure) {
+                            if (!targetEnabled && canAuthenticate) {
                                 // 关闭保护前需要进行系统锁身份确认
                                 activity?.let { act ->
                                     appLockManager.authenticate(
@@ -760,7 +761,7 @@ fun AdvancedSettingsPage(
             )
             Text(
                 text = stringResource(R.string.settings_app_lock_desc) +
-                    if (!isDeviceSecure) " " + stringResource(R.string.settings_app_lock_no_lock_hint) else "",
+                    if (!canAuthenticate) " " + stringResource(R.string.settings_app_lock_no_lock_hint) else "",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
