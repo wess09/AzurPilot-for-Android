@@ -264,11 +264,14 @@ fun AppRoot(
     }
     val isUnlocked by appLockManager.isUnlocked.collectAsStateWithLifecycle()
     val appLockEnabled by appSettings.appLockEnabled.collectAsStateWithLifecycle()
-    val isAppLocked = appLockEnabled && appLockManager.isDeviceSecure(context) && !isUnlocked
+    val settingsLoaded by appSettings.loaded.collectAsStateWithLifecycle()
+    // Fail closed until the persisted setting is read; the new-install default
+    // is false, but existing users may have explicitly enabled app lock.
+    val isAppLocked = !settingsLoaded || (appLockEnabled && appLockManager.canAuthenticate(context) && !isUnlocked)
+    var appLockError by remember { mutableStateOf<String?>(null) }
 
     // 首启「机型支持列表」弹窗：盘上标志未置位且本会话未处理过才弹；
     // 必须等设置读盘完成，否则老用户会先看到默认 false 闪一下
-    val settingsLoaded by appSettings.loaded.collectAsStateWithLifecycle()
     val communityNoticeAcknowledged by appSettings.communityNoticeAcknowledged.collectAsStateWithLifecycle()
     val compatNoticeShown by appSettings.compatNoticeShown.collectAsStateWithLifecycle()
     var compatNoticeDismissed by rememberSaveable { mutableStateOf(false) }
@@ -277,7 +280,11 @@ fun AppRoot(
     AzurPilotTheme(darkTheme = darkTheme) {
         AppLockGate(
             isUnlocked = !isAppLocked,
+            errorMessage = appLockError,
+            autoRequestUnlock = settingsLoaded,
             onUnlockRequest = {
+                if (!settingsLoaded) return@AppLockGate
+                appLockError = null
                 activity?.let { act ->
                     appLockManager.authenticate(
                         activity = act,
@@ -285,6 +292,9 @@ fun AppRoot(
                         subtitle = context.getString(R.string.auth_prompt_subtitle),
                         onSuccess = {
                             appLockManager.markUnlocked()
+                        },
+                        onError = { code, message ->
+                            appLockError = context.getString(R.string.app_lock_auth_failed, code, message)
                         },
                     )
                 }

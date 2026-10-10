@@ -1,6 +1,5 @@
 package com.azurpilot.ghio.auth
 
-import android.app.KeyguardManager
 import android.content.Context
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -51,12 +50,15 @@ class AppLockManager(
     val isUnlocked: StateFlow<Boolean> = _isUnlocked.asStateFlow()
 
     /**
-     * 判断设备是否配置了系统锁屏（PIN、图案或密码）
-     * Checks whether the device is secured with a PIN, pattern, or password.
+     * Check that the system can currently present an authenticator accepted by
+     * our prompt. KeyguardManager.isDeviceSecure is insufficient on cloud ROMs
+     * with incomplete GateKeeper implementations (issue #11).
      */
-    fun isDeviceSecure(context: Context): Boolean {
-        val keyguardManager = context.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-        return keyguardManager?.isDeviceSecure == true
+    fun canAuthenticate(context: Context): Boolean {
+        val result = runCatching {
+            BiometricManager.from(context).canAuthenticate(AUTHENTICATORS)
+        }.onFailure { Timber.w(it, "App lock capability check failed") }.getOrNull()
+        return result == BiometricManager.BIOMETRIC_SUCCESS
     }
 
     /**
@@ -65,7 +67,7 @@ class AppLockManager(
      * device is secured; bypassed when no screen lock is configured.
      */
     fun isLockRequired(context: Context): Boolean {
-        return appSettings.appLockEnabled.value && isDeviceSecure(context)
+        return appSettings.appLockEnabled.value && canAuthenticate(context)
     }
 
     /**
@@ -145,7 +147,14 @@ class AppLockManager(
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
-                    if (errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
+                    if (errorCode == BiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL) {
+                        // Some vendor ROMs report canAuthenticate() == SUCCESS
+                        // but have no usable GateKeeper credential at prompt time.
+                        // This specific error is unrecoverable by retrying.
+                        Timber.w("App lock: no device credential; unlocking to avoid permanent lockout")
+                        markUnlocked()
+                        onSuccess()
+                    } else if (errorCode == BiometricPrompt.ERROR_USER_CANCELED ||
                         errorCode == BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
                         errorCode == BiometricPrompt.ERROR_CANCELED
                     ) {
@@ -167,8 +176,7 @@ class AppLockManager(
             .setTitle(title)
             .setSubtitle(subtitle)
             .setAllowedAuthenticators(
-                BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                    BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                AUTHENTICATORS
             )
             .build()
 
@@ -178,5 +186,11 @@ class AppLockManager(
             Timber.e(e, "Failed to launch BiometricPrompt")
             onError?.invoke(-1, e.message.orEmpty()) ?: onCancel?.invoke()
         }
+    }
+
+    private companion object {
+        val AUTHENTICATORS =
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL
     }
 }

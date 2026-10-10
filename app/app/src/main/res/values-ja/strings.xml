@@ -605,6 +605,9 @@
     <string name="app_lock_title">アプリはロックされています</string>
     <string name="app_lock_desc">アプリロック保護が有効です。続行するには本人確認を行ってください。</string>
     <string name="app_lock_unlock_button">ロックを解除</string>
+    <string name="app_lock_auth_failed">認証に失敗しました（コード %1$d）：%2$s。再試行するか、端末のロック設定をご確認ください。</string>
+    <string name="host_shizuku_root_uid_error">Shizuku が root として動作しているため、仮想ディスプレイの作成が拒否されました。設定の「実行とセキュリティ」で Root 起動モードを許可して選択してください。</string>
+    <string name="host_root_fallback_failed">Root 起動モードへの自動切り替えでも仮想ディスプレイを作成できませんでした。Root 権限またはアプリのログをご確認ください。</string>
     <string name="device_report_title">機種を送信</string>
     <string name="device_report_description">機種情報を検出して対応の改善に役立てます</string>
     <string name="device_report_privacy">以下の機種情報と使用結果のみを送信し、GitHub に公開します。IMEI、シリアル番号、Android ID、アカウント、ログは読み取りません。</string>

@@ -607,6 +607,9 @@
     <string name="app_lock_title">应用已锁定</string>
     <string name="app_lock_desc">已开启应用锁屏保护，请验证身份后继续使用。</string>
     <string name="app_lock_unlock_button">验证身份并解锁</string>
+    <string name="app_lock_auth_failed">验证失败（代码 %1$d）：%2$s。请重试或检查系统锁屏设置。</string>
+    <string name="host_shizuku_root_uid_error">Shizuku 服务以 root 身份运行，系统拒绝创建虚拟屏。请在“设置 → 运行与安全”中授权并切换至 Root 启动模式。</string>
+    <string name="host_root_fallback_failed">已自动尝试 Root 启动模式，但虚拟屏仍创建失败。请检查 Root 授权或查看应用日志。</string>
     <string name="device_report_title">提交你的机型</string>
     <string name="device_report_description">自动检测机型，帮助完善适配</string>
     <string name="device_report_privacy">仅提交下方机型参数和使用结果，并公开到 GitHub。不读取 IMEI、序列号、Android ID、账户或日志。</string>

@@ -107,6 +107,9 @@ class RemoteServiceImpl : RemoteService.Stub() {
     /** 本特权进程的 pid / This privileged process's pid */
     override fun pid(): Int = Process.myPid()
 
+    /** Stable process UID probe for display-service package/UID validation. */
+    override fun processUid(): Int = Process.myUid()
+
     /** [AppWatchdog] 当前状态码 / Current [AppWatchdog] state code */
     override fun watchdogState(): Int = AppWatchdog.state.value
 

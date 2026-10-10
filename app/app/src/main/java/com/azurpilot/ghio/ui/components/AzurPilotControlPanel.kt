@@ -51,6 +51,7 @@ import com.azurpilot.ghio.proot.AzurPilotTaskState
 import com.azurpilot.ghio.proot.ProotHost
 import com.azurpilot.ghio.proot.ProotPhase
 import com.azurpilot.ghio.service.HostSnapshot
+import com.azurpilot.ghio.service.HostEnvironmentIssue
 import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.theme.AzurPilotTheme
 import org.koin.compose.koinInject
@@ -150,6 +151,19 @@ fun AzurPilotControlPanel(
                     stringResource(R.string.host_state_display_none)
                 },
             )
+            snapshot.environmentIssue?.let { issue ->
+                Text(
+                    text = stringResource(
+                        when (issue) {
+                            HostEnvironmentIssue.ROOT_BACKEND_REQUIRED -> R.string.host_shizuku_root_uid_error
+                            HostEnvironmentIssue.ROOT_FALLBACK_FAILED -> R.string.host_root_fallback_failed
+                        }
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
             AzurPilotStatusRow(
                 level = azurPilotStatusLevel(run, proot.phase),
                 labelRes = R.string.overlay_azurpilot_status,

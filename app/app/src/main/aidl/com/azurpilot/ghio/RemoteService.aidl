@@ -325,4 +325,7 @@ interface RemoteService {
      * and is effective only on Android 14+.
      */
     void setVirtualDisplayRefreshRate(float rate) = 76;
+
+    /** Actual UID of the privileged process; used for cloud-ROM backend compatibility. */
+    int processUid() = 77;
 }

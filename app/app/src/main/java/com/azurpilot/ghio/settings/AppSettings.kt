@@ -104,8 +104,8 @@ data class AppSettings(
      * Depends on the device screen lock (PIN / biometrics); no verification is
      * demanded when no device lock is set.
      */
-    @PrefKey(default = "true")
-    val appLockEnabled: String = "true",
+    @PrefKey(default = "false")
+    val appLockEnabled: String = "false",
 
     /**
      * 首次启动的「机型支持列表」弹窗是否已处理过（两个按钮都算处理）；
