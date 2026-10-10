@@ -69,6 +69,11 @@
     <string name="compat_notice_dont_ask_again">Don\'t show again</string>
     <string name="compat_notice_go">Open the list</string>
     <string name="compat_notice_later">Not now</string>
+    <string name="community_warning_title">Warning</string>
+    <string name="community_warning_message">Do NOT report issues or ask questions in the upstream AzurPilot repository (wess09/AzurPilot) or in non-AzurPilot for Android QQ groups (including upstream AzurPilot QQ groups).\n\nViolators will be permanently removed from related groups and blocked on GitHub.</string>
+    <string name="community_warning_confirm_read">I have read and understood</string>
+    <string name="community_warning_continue">Continue</string>
+    <string name="community_warning_continue_countdown">Continue (%1$ds)</string>
     <string name="settings_hot_update">Hot update</string>
     <string name="settings_hot_update_desc">Updates source and web assets only, never reinstalls the runtime; running tasks stop first and resume afterwards.</string>
     <string name="settings_hot_update_check">Check for updates</string>

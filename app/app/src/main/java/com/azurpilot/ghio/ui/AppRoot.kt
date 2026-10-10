@@ -97,6 +97,7 @@ import com.azurpilot.ghio.settings.SettingsViewModel
 import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.theme.AzurPilotTheme
 import com.azurpilot.ghio.ui.azurpilot.AzurPilotPage
+import com.azurpilot.ghio.ui.components.CommunityWarningDialog
 import com.azurpilot.ghio.ui.components.ShizukuReadinessDialog
 import com.azurpilot.ghio.ui.hangar.HangarScreen
 import com.azurpilot.ghio.ui.navigation.Routes
@@ -246,6 +247,7 @@ fun AppRoot(
 
     val context = LocalContext.current
     val activity = context as? FragmentActivity
+    val scope = rememberCoroutineScope()
 
     // 应用进入后台/熄屏时锁定应用
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -267,6 +269,7 @@ fun AppRoot(
     // 首启「机型支持列表」弹窗：盘上标志未置位且本会话未处理过才弹；
     // 必须等设置读盘完成，否则老用户会先看到默认 false 闪一下
     val settingsLoaded by appSettings.loaded.collectAsStateWithLifecycle()
+    val communityNoticeAcknowledged by appSettings.communityNoticeAcknowledged.collectAsStateWithLifecycle()
     val compatNoticeShown by appSettings.compatNoticeShown.collectAsStateWithLifecycle()
     var compatNoticeDismissed by rememberSaveable { mutableStateOf(false) }
     var showCompatNoticeDialog by rememberSaveable { mutableStateOf(false) }
@@ -288,7 +291,15 @@ fun AppRoot(
             },
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (!isAppLocked && provisionState is ProvisionState.Ready && fullUpdatePending &&
+            if (!isAppLocked && settingsLoaded && !communityNoticeAcknowledged) {
+                CommunityWarningDialog(
+                    onAcknowledge = {
+                        scope.launch { appSettings.setCommunityNoticeAcknowledged(true) }
+                    },
+                )
+            }
+
+            if (!isAppLocked && communityNoticeAcknowledged && provisionState is ProvisionState.Ready && fullUpdatePending &&
                 !runtimePromptDismissed && !applyingRuntimeUpdate && !prootStarted
             ) {
                 AlertDialog(
@@ -316,7 +327,7 @@ fun AppRoot(
                     applyingRuntimeUpdate = false
                 }
             }
-            if (!isAppLocked) {
+            if (!isAppLocked && communityNoticeAcknowledged) {
                 appUpdateState.available?.takeUnless {
                     provisionState is ProvisionState.Ready && fullUpdatePending &&
                         !runtimePromptDismissed && !applyingRuntimeUpdate
@@ -360,7 +371,6 @@ fun AppRoot(
                 pagerState.scrollToPage(selectedPage)
                 snapshotFlow { pagerState.settledPage }.collect { selectedPage = it }
             }
-        val scope = rememberCoroutineScope()
         val snackbarHostState = remember { SnackbarHostState() }
         var exportKind by remember { mutableStateOf<LogExportKind?>(null) }
 
@@ -378,6 +388,7 @@ fun AppRoot(
             showProvision,
             isAppLocked,
             settingsLoaded,
+            communityNoticeAcknowledged,
             compatNoticeShown,
             compatNoticeDismissed,
             readiness.needsGuidance,
@@ -391,6 +402,7 @@ fun AppRoot(
                 !showProvision &&
                 !isAppLocked &&
                 settingsLoaded &&
+                communityNoticeAcknowledged &&
                 !compatNoticeShown &&
                 !compatNoticeDismissed &&
                 !showCompatNoticeDialog &&

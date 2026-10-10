@@ -69,6 +69,11 @@
     <string name="compat_notice_dont_ask_again">不再弹出</string>
     <string name="compat_notice_go">去提交</string>
     <string name="compat_notice_later">暂不</string>
+    <string name="community_warning_title">警告</string>
+    <string name="community_warning_message">严禁在 AzurPilot 仓库（wess09/AzurPilot）\n以及在非 AzurPilot for Android QQ 群内反馈或咨询任何问题\n包括 AzurPilot QQ 群\n\n违者永久踢出相应群聊 GitHub 永久拉黑</string>
+    <string name="community_warning_confirm_read">我已阅读并理解</string>
+    <string name="community_warning_continue">继续</string>
+    <string name="community_warning_continue_countdown">继续 (%1$ds)</string>
     <string name="settings_hot_update">热更新</string>
     <string name="settings_hot_update_desc">只更新源码和页面资源，不重装运行时；更新中任务会先停止，完成后自动恢复。</string>
     <string name="settings_hot_update_check">检查更新</string>

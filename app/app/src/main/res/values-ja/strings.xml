@@ -69,6 +69,11 @@
     <string name="compat_notice_dont_ask_again">今後表示しない</string>
     <string name="compat_notice_go">リストを開く</string>
     <string name="compat_notice_later">後で</string>
+    <string name="community_warning_title">警告</string>
+    <string name="community_warning_message">AzurPilot 本家リポジトリ（wess09/AzurPilot）および AzurPilot for Android 専用以外の QQ グループ（本家 AzurPilot QQ グループを含む）でのフィードバックや質問は固く禁止されています。\n\n違反者は該当グループから永久追放され、GitHub でも永久ブロックされます。</string>
+    <string name="community_warning_confirm_read">読み、理解しました</string>
+    <string name="community_warning_continue">続ける</string>
+    <string name="community_warning_continue_countdown">続ける (%1$ds)</string>
     <string name="settings_hot_update">ホットアップデート</string>
     <string name="settings_hot_update_desc">ソースと Web アセットのみを更新し、ランタイムの再インストールは行いません。実行中のタスクは一旦停止し、完了後に自動再開します。</string>
     <string name="settings_hot_update_check">更新を確認</string>

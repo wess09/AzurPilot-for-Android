@@ -118,6 +118,17 @@ data class AppSettings(
     val compatNoticeShown: String = "false",
 
     /**
+     * 社区规范与免责警告弹窗是否已确认（必须勾选已阅读并强制展示 10 秒后点击继续）；
+     * 确认后落盘，关闭后不再弹出
+     *
+     * Whether the community guidelines warning dialog has been acknowledged (must check
+     * read-and-understood and wait for 10-second countdown before tapping continue);
+     * persisted once acknowledged, never shown again.
+     */
+    @PrefKey(default = "false")
+    val communityNoticeAcknowledged: String = "false",
+
+    /**
      * 允许运行时热更新：经 /android/update 私有接口增量更新 AzurPilot 源码与
      * 预构建前端（CI 按 commit 发布），只动 /opt/azurpilot 内的代码与资源，
      * 不重装 rootfs。关闭后仅保留整包 Runtime 更新。
