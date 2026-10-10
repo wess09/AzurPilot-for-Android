@@ -15,6 +15,7 @@
 遮罩显示本地时间、日期、电量，以及正在运行实例的任务图标和名称。
 运行实例与正在浏览的实例不同时，优先使用运行实例的数据；没有任务数据时显示运行、
 等待或连接状态。调度器、工具或运行环境停止时自动退出。
+任务状态请求失败时保留上次已知状态；WebUI 可达不能单独证明任务已经停止。
 
 ### 防烧屏与布局
 
@@ -58,6 +59,8 @@ The overlay displays local time, date, battery level, and the running instance's
 When the running and browsed instances differ, the running instance takes precedence. Missing task
 data falls back to running, waiting, or connecting status. Stopping the scheduler, tool, or runtime
 environment dismisses the overlay automatically.
+Failed task-status requests retain the last known state; WebUI reachability alone does not confirm
+that a task has stopped.
 
 ### Burn-in mitigation and layout
 

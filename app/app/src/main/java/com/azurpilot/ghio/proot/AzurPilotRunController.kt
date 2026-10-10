@@ -86,6 +86,12 @@ data class AzurPilotRunState(
     val toolAlive: Boolean = false,
     /** 在跑的工具名（TOOL_* 常量）；没在跑为 null / The running tool's name (the TOOL_* constants); null when idle. */
     val toolName: String? = null,
+    /**
+     * 最近一次轮询是否确认了任务状态；失败时其余运行字段保留上次已知值。
+     *
+     * Whether the latest poll confirmed task status; failed polls retain the last known run fields.
+     */
+    val statusKnown: Boolean = false,
 ) {
     companion object {
         /** 与 seed_azurpilot.py 播种的实例名一致（上游 DEFAULT_CONFIG_NAME），否则首启会选到一个不存在的配置 */
@@ -206,7 +212,7 @@ class AzurPilotRunController(
         val status = fetchHotUpdateState() ?: return
         _hotUpdate.value = status
         val run = _state.value
-        if (status.available && !status.busy && !run.runnerAlive && !run.toolAlive) {
+        if (run.statusKnown && status.available && !status.busy && !run.runnerAlive && !run.toolAlive) {
             Timber.i("hot update: auto-applying %s", status.upstreamHead)
             applyHotUpdate()
         }
@@ -397,10 +403,7 @@ class AzurPilotRunController(
         if (configs == null) {
             _state.update {
                 it.copy(
-                    reachable = false, runnerAlive = false, pid = null,
-                    guiAlive = false, logLines = 0, logTail = emptyList(),
-                    configs = emptyList(), runningConfig = null,
-                    toolAlive = false, toolName = null,
+                    reachable = false, statusKnown = false, configs = emptyList(),
                 )
             }
             return
@@ -411,15 +414,19 @@ class AzurPilotRunController(
         }
 
         val body = get("$BASE/status?config=${encodedConfig()}", HTTP_TIMEOUT_MS)
-        val j = body?.let { runCatching { JSONObject(it) }.getOrNull() }
+        val j = body?.let {
+            runCatching {
+                JSONObject(it).also { status ->
+                    // 缺失或损坏的任务状态不能用 optBoolean 的默认 false 冒充已停止。
+                    status.getBoolean("runner_alive")
+                    if (status.has("tool_alive")) status.getBoolean("tool_alive")
+                }
+            }.getOrNull()
+        }
         if (j == null) {
-            // WebUI 在答，但这个实例还没有状态可报（例如实例文件刚被删、或播种还没落盘）
+            // WebUI 可达不等于任务已停止；超时、异常响应和解析失败都保留上次运行态。
             _state.update {
-                it.copy(
-                    reachable = true, runnerAlive = false, pid = null,
-                    logLines = 0, logTail = emptyList(), configs = configs,
-                    runningConfig = null, toolAlive = false, toolName = null,
-                )
+                it.copy(reachable = true, statusKnown = false, configs = configs)
             }
             return
         }
@@ -437,7 +444,7 @@ class AzurPilotRunController(
             ?: _state.value.logTail
         _state.update {
             it.copy(
-                reachable = true, runnerAlive = runnerAlive, pid = pid,
+                reachable = true, statusKnown = true, runnerAlive = runnerAlive, pid = pid,
                 guiAlive = guiAlive, logLines = logLines, logTail = tail,
                 configs = configs, runningConfig = runningConfig,
                 toolAlive = toolAlive, toolName = toolName,

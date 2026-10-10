@@ -104,7 +104,7 @@ class ScreenSaverOverlayManager(
                 .collect { (snapshot, run) ->
                     val up = snapshot.environmentUp
                     // 状态接口短暂断线不等于任务结束，保留上次运行态以免突然亮屏。
-                    val running = up && if (run.reachable) {
+                    val running = up && if (run.statusKnown) {
                         run.runnerAlive || run.toolAlive
                     } else wasRunning
                     when {
