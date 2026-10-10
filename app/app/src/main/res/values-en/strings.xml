@@ -595,6 +595,9 @@
     <string name="app_lock_title">App Locked</string>
     <string name="app_lock_desc">App lock protection is active. Please verify your identity to continue.</string>
     <string name="app_lock_unlock_button">Verify and Unlock</string>
+    <string name="app_lock_auth_failed">Authentication failed (code %1$d): %2$s. Try again or check the device lock settings.</string>
+    <string name="host_shizuku_root_uid_error">Shizuku is running as root, so Android rejected the virtual display. Authorize and select the Root startup backend in Settings → Run &amp; Security.</string>
+    <string name="host_root_fallback_failed">The automatic Root backend retry also failed to create the virtual display. Check Root authorization or the app logs.</string>
     <string name="device_report_title">Submit your device</string>
     <string name="device_report_description">Detect device details to help improve compatibility</string>
     <string name="device_report_privacy">Only the device details and compatibility result shown below are submitted and published on GitHub. IMEI, serial numbers, Android ID, accounts and logs are never read.</string>

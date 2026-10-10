@@ -592,6 +592,9 @@
     <string name="app_lock_title">應用程式已鎖定</string>
     <string name="app_lock_desc">已開啟應用程式鎖定保護，請驗證身分後繼續使用。</string>
     <string name="app_lock_unlock_button">驗證身分並解鎖</string>
+    <string name="app_lock_auth_failed">驗證失敗（代碼 %1$d）：%2$s。請重試或檢查系統鎖定設定。</string>
+    <string name="host_shizuku_root_uid_error">Shizuku 服務以 root 身分執行，系統拒絕建立虛擬螢幕。請在「設定 → 執行與安全」中授權並切換至 Root 啟動模式。</string>
+    <string name="host_root_fallback_failed">已自動嘗試 Root 啟動模式，但虛擬螢幕仍建立失敗。請檢查 Root 授權或查看應用程式日誌。</string>
     <string name="device_report_title">提交你的機型</string>
     <string name="device_report_description">自動偵測機型，協助完善適配</string>
     <string name="device_report_privacy">僅提交下方機型參數和使用結果，並公開到 GitHub。不讀取 IMEI、序號、Android ID、帳戶或日誌。</string>

@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -48,6 +49,8 @@ import com.azurpilot.ghio.theme.AppTokens
 fun AppLockGate(
     isUnlocked: Boolean,
     onUnlockRequest: () -> Unit,
+    errorMessage: String? = null,
+    autoRequestUnlock: Boolean = true,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
@@ -55,8 +58,8 @@ fun AppLockGate(
         content()
 
         if (!isUnlocked) {
-            LaunchedEffect(Unit) {
-                onUnlockRequest()
+            LaunchedEffect(autoRequestUnlock) {
+                if (autoRequestUnlock) onUnlockRequest()
             }
 
             Box(
@@ -67,7 +70,9 @@ fun AppLockGate(
                         // 拦截所有触控，防止误触底层内容
                         awaitPointerEventScope {
                             while (true) {
-                                awaitPointerEvent().changes.forEach { it.consume() }
+                                // Let the unlock button handle its event before
+                                // swallowing anything that could hit content beneath.
+                                awaitPointerEvent(PointerEventPass.Final).changes.forEach { it.consume() }
                             }
                         }
                     },
@@ -100,6 +105,15 @@ fun AppLockGate(
                     Spacer(modifier = Modifier.height(AppTokens.Spacing.xl))
                     Button(onClick = onUnlockRequest) {
                         Text(text = stringResource(R.string.app_lock_unlock_button))
+                    }
+                    if (!errorMessage.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(AppTokens.Spacing.sm))
+                        Text(
+                            text = errorMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center,
+                        )
                     }
                 }
             }

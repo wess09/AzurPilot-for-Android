@@ -3,9 +3,11 @@ package com.azurpilot.ghio.service
 import android.content.Context
 import android.os.Build
 import android.view.Surface
+import com.azurpilot.ghio.RemoteService
 import com.azurpilot.ghio.BuildConfig
 import com.azurpilot.ghio.AppDispatchers
 import com.azurpilot.ghio.constant.DefaultDisplayConfig
+import com.azurpilot.ghio.domain.RemoteBackend
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.privileged.PrivilegedServicePort
 import com.azurpilot.ghio.privileged.PrivilegedServiceState
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
@@ -69,6 +72,9 @@ class HostState(
     /** 周期与按需探测共用一把锁，防并发探测挤在同一端口上 */
     private val probeMutex = Mutex()
     private val envMutex = Mutex()
+    // Prevent repeated backend churn when a vendor ROM cannot create a display
+    // even after a Root retry. The user can still select a backend manually.
+    private var rootFallbackAttempted = false
     private val pingSeq = AtomicInteger(0)
 
     /**
@@ -84,7 +90,7 @@ class HostState(
                     if (state == PrivilegedServiceState.Connected) {
                         it.copy(privilegedConnected = true)
                     } else {
-                        HostSnapshot()
+                        HostSnapshot(environmentIssue = it.environmentIssue)
                     }
                 }
             }
@@ -155,27 +161,102 @@ class HostState(
             runCatching { service.setup(null, null, BuildConfig.DEBUG) }
                 .onFailure { Timber.w(it, "setup failed") }
             appSettings.loaded.first { it }
-            val displayId = runCatching {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    service.setVirtualDisplayRefreshRate(appSettings.virtualDisplayRefreshRate.value)
-                }
-                service.startVirtualDisplay()
+            var displayId = startDisplay(service)
+            // Cloud ROMs sometimes run the Shizuku remote service as uid=0.
+            // DisplayManagerService rejects com.android.shell for that UID.
+            // Retry using the already-authorized Root launcher, which runs as
+            // shell (uid=2000) on affected Android 13 devices (issue #11).
+            if (displayId == DefaultDisplayConfig.DISPLAY_NONE &&
+                !rootFallbackAttempted &&
+                servicePort.currentBackend == RemoteBackend.SHIZUKU &&
+                runCatching { service.processUid() }.getOrNull() == 0
+            ) {
+                rootFallbackAttempted = true
+                displayId = retryRootBackendForRootShizuku()
             }
-                .getOrElse {
-                    Timber.e(it, "startVirtualDisplay failed")
-                    return@withLock
-                }
             if (displayId == DefaultDisplayConfig.DISPLAY_NONE) {
                 Timber.w("startVirtualDisplay returned DISPLAY_NONE")
                 return@withLock
             }
             Timber.i("Environment started, displayId=%s", displayId)
-            _snapshot.update { it.copy(vdDisplayId = displayId) }
+            _snapshot.update { it.copy(vdDisplayId = displayId, environmentIssue = null) }
             RunForegroundService.start(context)
         }
         // 建完屏（或本来就有屏）顺手刷一次桥态，UI 不必干等下个探测周期
         probeBridgeNow()
         return _snapshot.value.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE
+    }
+
+    private fun startDisplay(service: RemoteService): Int = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            service.setVirtualDisplayRefreshRate(appSettings.virtualDisplayRefreshRate.value)
+        }
+        service.startVirtualDisplay()
+    }.getOrElse {
+        Timber.e(it, "startVirtualDisplay failed")
+        DefaultDisplayConfig.DISPLAY_NONE
+    }
+
+    /**
+     * Use the Root backend only if authorization already exists. Never request
+     * su access unexpectedly or silently switch on unrelated display errors.
+     * A failed retry restores the user's original Shizuku selection.
+     */
+    private suspend fun retryRootBackendForRootShizuku(): Int {
+        permissionGateway.refresh()
+        if (!permissionGateway.state.value.rootGranted) {
+            _snapshot.update { it.copy(environmentIssue = HostEnvironmentIssue.ROOT_BACKEND_REQUIRED) }
+            Timber.e(
+                "Virtual display unavailable: Shizuku service runs as root (uid=0), " +
+                    "but com.android.shell belongs to uid=2000. " +
+                    "Authorize the Root backend in Settings > Run & Security to retry."
+            )
+            return DefaultDisplayConfig.DISPLAY_NONE
+        }
+        Timber.w("Shizuku service uid=0 cannot own com.android.shell; retrying Root backend")
+        var displayId = DefaultDisplayConfig.DISPLAY_NONE
+        try {
+            permissionGateway.setBackend(RemoteBackend.ROOT)
+            appSettings.startupBackend.first { it == RemoteBackend.ROOT }
+            // Allow PermissionManager's backend observer to process the change
+            // before the explicit bind, then replace any stale Shizuku service.
+            yield()
+            servicePort.unbind()
+            permissionGateway.refresh()
+            when (val result = permissionGateway.bindService()) {
+                ServiceBindResult.Started, ServiceBindResult.AlreadyConnected -> {
+                    val rootService = withTimeout(CONNECT_WAIT_MS) {
+                        servicePort.serviceState.first {
+                            it == PrivilegedServiceState.Connected &&
+                                servicePort.currentBackend == RemoteBackend.ROOT
+                        }
+                        requireNotNull(servicePort.serviceOrNull()) {
+                            "Root backend reported connected without a service"
+                        }
+                    }
+                    val uid = rootService.processUid()
+                    if (uid == android.os.Process.SHELL_UID) {
+                        runCatching { rootService.setup(null, null, BuildConfig.DEBUG) }
+                            .onFailure { Timber.w(it, "Root backend setup failed") }
+                        displayId = startDisplay(rootService)
+                    } else {
+                        Timber.e("Root backend uid=%s is not shell; cannot safely retry virtual display", uid)
+                    }
+                }
+                else -> Timber.e("Root fallback bind rejected: %s", result)
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Root backend virtual display fallback failed")
+        }
+        if (displayId == DefaultDisplayConfig.DISPLAY_NONE) {
+            _snapshot.update { it.copy(environmentIssue = HostEnvironmentIssue.ROOT_FALLBACK_FAILED) }
+            Timber.w("Root fallback failed; restoring Shizuku backend")
+            runCatching { permissionGateway.setBackend(RemoteBackend.SHIZUKU) }
+                .onFailure { Timber.e(it, "Could not restore Shizuku backend") }
+        } else {
+            Timber.i("Root backend recovered virtual display, displayId=%s", displayId)
+        }
+        return displayId
     }
 
     /**
@@ -323,6 +404,7 @@ data class HostSnapshot(
     val privilegedConnected: Boolean = false,
     val bridgeReachable: Boolean = false,
     val vdDisplayId: Int = DefaultDisplayConfig.DISPLAY_NONE,
+    val environmentIssue: HostEnvironmentIssue? = null,
 ) {
     /**
      * 环境整体活着：屏在且桥通；悬浮球与 FGS 的「活着」判据
@@ -332,4 +414,10 @@ data class HostSnapshot(
      */
     val environmentUp: Boolean
         get() = bridgeReachable && vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE
+}
+
+/** Actionable virtual-display failure exposed to the status panel. */
+enum class HostEnvironmentIssue {
+    ROOT_BACKEND_REQUIRED,
+    ROOT_FALLBACK_FAILED,
 }
