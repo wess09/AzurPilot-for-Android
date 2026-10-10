@@ -14,8 +14,10 @@ import timber.log.Timber
  * 服务因内存压力被杀后，系统在资源允许时以 null intent 自动重建本服务，带动宿主
  * 进程复活。
  *
- * 生命周期全程自检：onCreate 与 onStartCommand 都会调
- * [KeepAliveManager.onKeepAlivePing]，重建后立即修复其余保活子系统。
+ * 自检只在 onCreate 做一次：[KeepAliveManager.onKeepAlivePing] 内部会重新
+ * startService 本服务，若 onStartCommand 也回调它便形成自我触发环路
+ * （见方法内注释），因此 onStartCommand 只返回 START_STICKY，
+ * 进程重建后的自愈由 onCreate 承担。
  *
  * Sticky background daemon service.
  *
@@ -25,9 +27,10 @@ import timber.log.Timber
  * the system recreates it automatically with a null intent once resources allow,
  * reviving the host process.
  *
- * Self-checks for its whole lifecycle: onCreate and onStartCommand both invoke
- * [KeepAliveManager.onKeepAlivePing], so a rebuild immediately repairs the other
- * keep-alive subsystems.
+ * The self-check runs in onCreate only: [KeepAliveManager.onKeepAlivePing] restarts this
+ * service through startService, so invoking it from onStartCommand as well would form a
+ * self-triggering loop (see the inline comment). onStartCommand only returns
+ * START_STICKY, leaving the post-rebuild self-heal to onCreate.
  */
 class KeepAliveStickyService : Service() {
 
@@ -41,7 +44,11 @@ class KeepAliveStickyService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Timber.d("KeepAliveStickyService: onStartCommand flags=$flags startId=$startId")
-        KeepAliveManager.getInstance()?.onKeepAlivePing()
+        // 这里刻意不再回调 onKeepAlivePing()：该方法内部会重新 startService 本服务，
+        // 于是形成「startService → onStartCommand → startService」的自我触发环路，
+        // 主线程被持续占满（应用 ANR、界面只剩一张白底），
+        // 同时环路里每轮都会 startService 双进程守护，令其 bindService 连接无限累积。
+        // 进程被系统重建时的自愈已由 onCreate() 承担，onStartCommand 无需重复触发。
         return START_STICKY
     }
 
