@@ -13,12 +13,6 @@
 #include <cmath>
 #include <algorithm>
 #include <string>
-#include <unistd.h>
-#include <sys/syscall.h>
-#include <cerrno>
-#include <cstdlib>
-#include <fcntl.h>
-#include <vector>
 #include "third_party/litert/litert/c/litert_layout.h"
 
 namespace {
@@ -73,46 +67,6 @@ jlong ReadHandle(JNIEnv* env, jobject object) {
     return env->GetLongField(object, handle_field);
 }
 }  // namespace
-
-// 匿名文件仅承载当前会话的图视图；APK 和持久缓存不保留第二份权重。
-// Anonymous files hold session graph views without a second persistent weight copy.
-extern "C" JNIEXPORT jint JNICALL
-Java_com_azurpilot_ghio_ocr_OcrNative_openMemoryModel(
-        JNIEnv* env, jobject, jobject buffer, jstring directory, jboolean allow_memfd) {
-    void* data = env->GetDirectBufferAddress(buffer);
-    const jlong size = env->GetDirectBufferCapacity(buffer);
-    if (data == nullptr || size <= 0 || size > 256 * 1024 * 1024) return -1;
-    int fd = allow_memfd == JNI_TRUE ? static_cast<int>(syscall(SYS_memfd_create, "ocr-litert-cpu", 1)) : -1;
-    if (fd < 0 && directory != nullptr) {
-        // Android 9/10 不依赖 memfd；先 unlink，再写入，不留下持久权重文件。
-        const char* path = env->GetStringUTFChars(directory, nullptr);
-        if (path == nullptr) return -1;
-        std::string pattern = std::string(path) + "/ocr-cpu-XXXXXX";
-        env->ReleaseStringUTFChars(directory, path);
-        std::vector<char> temporary(pattern.begin(), pattern.end());
-        temporary.push_back('\0');
-        fd = mkstemp(temporary.data());
-        if (fd >= 0 && (unlink(temporary.data()) != 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) != 0)) {
-            close(fd);
-            return -1;
-        }
-    }
-    if (fd < 0) return -1;
-    size_t offset = 0;
-    while (offset < static_cast<size_t>(size)) {
-        const ssize_t written = write(fd, static_cast<const char*>(data) + offset, size - offset);
-        if (written < 0 && errno == EINTR) continue;
-        if (written <= 0) { close(fd); return -1; }
-        offset += written;
-    }
-    lseek(fd, 0, SEEK_SET);
-    return fd;
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_azurpilot_ghio_ocr_OcrNative_closeMemoryModel(JNIEnv*, jobject, jint fd) {
-    if (fd >= 0) close(fd);
-}
 
 // 编译会话的真实输出布局可能已经改变，不能读取源模型里的静态 40 时间步。
 // Read the compiled output layout rather than the source model's static time axis.

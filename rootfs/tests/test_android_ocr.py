@@ -58,6 +58,10 @@ class Handler(socketserver.StreamRequestHandler):
             reply, data = {"ok": True, "model": METADATA}, b""
         else:
             self.server.last_source = request.get("source")
+            if self.server.initialization_failure:
+                self.wfile.write(json.dumps({"ok": False, "error_code": "cpu_initialization_failed",
+                                            "error": "Failed to create model from file."}).encode() + b"\n")
+                return
             values = np.frombuffer(self.rfile.read(request["length"]), dtype="<f4").reshape(request["shape"])
             data = (values * 2).tobytes()
             shape = [-1] if self.server.malformed else request["shape"]
@@ -90,6 +94,7 @@ class OcrProtocolTest(unittest.TestCase):
 
     def setUp(self):
         self.server.drop_once = self.server.malformed = self.server.truncated = False
+        self.server.initialization_failure = False
         CpuSession.created = 0
         self.values = np.linspace(-1, 1, 3 * 48 * 320, dtype=np.float32).reshape(1, 3, 48, 320)
 
@@ -114,6 +119,29 @@ class OcrProtocolTest(unittest.TestCase):
         self.server.drop_once = True
         np.testing.assert_array_equal(session.run(None, {"x": self.values})[0], self.values * 2)
         self.assertFalse(session._failed)
+
+    def test_cpu_initialization_failure_stops_business_instance_without_game_restart(self):
+        session = self.session()
+        self.server.initialization_failure = True
+        with patch.dict(os.environ, {"AZURPILOT_OCR_TEST": "0"}):
+            with self.assertRaises(ocr.AndroidOcrInitializationError) as raised:
+                try:
+                    session.run(None, {"x": self.values})
+                except Exception:
+                    self.fail("Fatal OCR initialization entered the scheduler restart handler")
+        self.assertIsInstance(raised.exception, SystemExit)
+        self.assertIsNone(session._socket)
+        self.assertEqual(CpuSession.created, 0)
+
+    def test_cpu_initialization_diagnostic_reports_error_and_can_retry(self):
+        session = self.session()
+        self.server.initialization_failure = True
+        with patch.dict(os.environ, {"AZURPILOT_OCR_TEST": "1"}):
+            with self.assertRaisesRegex(RuntimeError, "Failed to create model from file"):
+                session.run(None, {"x": self.values})
+            self.assertIsNone(session._socket)
+            self.server.initialization_failure = False
+            np.testing.assert_array_equal(session.run(None, {"x": self.values})[0], self.values * 2)
 
     def test_truncated_payload_reports_error_and_later_call_recovers(self):
         session = self.session()

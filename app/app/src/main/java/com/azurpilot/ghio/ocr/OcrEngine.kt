@@ -692,8 +692,14 @@ class OcrEngine(
             session.cpu?.close()
             session.cpu = null
             trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "litert_cpu_compile")
-            session.cpu = OcrLiteCpu(materialize(conversion), conversion, singleShape,
-                runtime.getValue("litert").jsonPrimitive.content, context.cacheDir)
+            try {
+                session.cpu = OcrLiteCpu(materialize(conversion), conversion, singleShape,
+                    runtime.getValue("litert").jsonPrimitive.content, context.cacheDir)
+            } catch (error: Exception) {
+                throw OcrCpuInitializationException(error)
+            } catch (error: LinkageError) {
+                throw OcrCpuInitializationException(error)
+            }
             session.cpuShape = singleShape
         }
         val cpu = session.cpu!!

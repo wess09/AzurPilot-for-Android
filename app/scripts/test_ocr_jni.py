@@ -102,8 +102,6 @@ public class OcrNative {
     public native String mediatekDriverError(boolean requireApusys);
     public native String mediatekAdapterLibrary();
     public native boolean softmaxInPlace(float[] values, int classes);
-    public native int openMemoryModel(java.nio.ByteBuffer values, String directory, boolean allowMemfd);
-    public native void closeMemoryModel(int fd);
     public native long[] outputShape(CompiledModel model, String runtimeVersion);
 }
 """
@@ -175,25 +173,7 @@ public class Fixture {
         if (bridge.outputShape(new CompiledModel(compile(-1)), "2.1.0rc1") != null ||
                 bridge.outputShape(new CompiledModel(1), "wrong") != null)
             throw new AssertionError("Invalid output layout accepted");
-        java.nio.ByteBuffer bytes = java.nio.ByteBuffer.allocateDirect(8);
-        bytes.putLong(12345L);
-        int fd = bridge.openMemoryModel(bytes, System.getProperty("java.io.tmpdir"), true);
-        if (fd < 0) throw new AssertionError("Anonymous model creation failed");
-        byte[] actual = java.nio.file.Files.readAllBytes(java.nio.file.Path.of("/proc/self/fd/" + fd));
-        bytes.flip();
-        byte[] expected = new byte[8]; bytes.get(expected);
-        if (!java.util.Arrays.equals(actual, expected)) throw new AssertionError("Anonymous model bytes differ");
-        bridge.closeMemoryModel(fd);
-        if (java.nio.file.Files.exists(java.nio.file.Path.of("/proc/self/fd/" + fd)))
-            throw new AssertionError("Anonymous model leaked");
-        fd = bridge.openMemoryModel(bytes, System.getProperty("java.io.tmpdir"), false);
-        if (fd < 0) throw new AssertionError("Older Android anonymous-file fallback failed");
-        actual = java.nio.file.Files.readAllBytes(java.nio.file.Path.of("/proc/self/fd/" + fd));
-        if (!java.util.Arrays.equals(actual, expected)) throw new AssertionError("Fallback model bytes differ");
-        bridge.closeMemoryModel(fd);
-        if (bridge.openMemoryModel(java.nio.ByteBuffer.allocate(8), "unused", true) != -1)
-            throw new AssertionError("Heap buffer accepted");
-        System.out.println("OCR JNI: output layouts and anonymous model lifetime passed");
+        System.out.println("OCR JNI: output layouts passed");
         if (bridge.mediatekDriverError(false) == null)
             throw new AssertionError("Missing MTK driver must be rejected before SDK loading");
         float[] logits = {1000, 999, -1000, -1000, -999, 1000};

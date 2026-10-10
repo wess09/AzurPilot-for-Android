@@ -24,6 +24,13 @@ MAX_PAYLOAD = 64 * 1024 * 1024
 LOGGER = logging.getLogger("android_ocr")
 
 
+class AndroidOcrInitializationError(SystemExit):
+    """终止 OCR 无法初始化的 AP 实例，绕过调度器的通用游戏重启处理。
+
+    Stops an AP instance whose OCR cannot initialize, bypassing generic game restarts.
+    """
+
+
 def model_identity(path):
     """读取无权重的模型身份文件；迁移期间也接受原文件的内容哈希。
 
@@ -267,6 +274,10 @@ class AndroidSession:
             raise ValueError("Invalid OCR response header")
         reply = json.loads(line)
         if not reply.get("ok"):
+            if reply.get("error_code") == "cpu_initialization_failed" and os.environ.get("AZURPILOT_OCR_TEST") != "1":
+                message = "OCR 初始化失败，任务已停止。请重启应用重试，并导出 OCR 日志。"
+                LOGGER.error("%s %s", message, reply.get("error", ""))
+                raise AndroidOcrInitializationError(message)
             raise RuntimeError(reply.get("error", "Android OCR failed"))
         data = self._read_exact(reply.get("length", 0))
         return reply, data

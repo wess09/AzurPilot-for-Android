@@ -28,14 +28,16 @@ OCR 权重。GPU 驱动失败时保留 NPU 主干，末尾改用 CPU 并报告�
 
 ### 动态尺寸与模型清理
 
-LiteRT NPU 基准图保持静态尺寸。CPU 会话从同一份 LiteRT 文件创建匿名图视图，仅修改
+LiteRT NPU 基准图保持静态尺寸。CPU 会话从同一份 LiteRT 文件创建私有临时图视图，仅修改
 构建验证过的输入尺寸、reshape、池化规则和输出尺寸字段，不修改训练权重。
 识别器保留 AP 实际输入宽度；时间步数为 `floor((W + 3) / 8)`。CPU 池化采用原 ONNX
 的 VALID 规则，因此奇数宽度也保持原模型语义。检测器按实际高度和宽度专门化。
 批次逐张推理，输出仍使用 AP 期望的布局和尺寸。
 
-Android 11+ 优先使用 memfd。旧版本或 memfd 不可用时，在私有缓存目录创建文件并在
-写入前取消目录链接，只通过文件描述符访问。两种路径都随会话释放，不保存第二份权重。
+2026-10-10 起，所有 Android 版本都通过私有缓存中的真实临时文件加载 CPU 模型，
+避免部分 ROM 的 SELinux 拒绝重开 memfd。文件保留到模型关闭，独立名称与文件锁防止
+版本或尺寸串用，并在下一次创建时清理已退出会话的残留。详见
+[SELinux CPU 修复](ocr-cpu-selinux-fix.md)。
 CPU 环境不提供厂商 provider，只请求 CPU，并检查不存在 NPU dispatch 分区。
 
 CI 在原始模型质量检查后删除 AP、NCNN、旧 CnOCR 和 RapidOCR 默认权重，保留语言字典。
@@ -125,16 +127,18 @@ vendor requirements. This change does not establish hardware support for every v
 
 ### Dynamic dimensions and weight retirement
 
-The LiteRT NPU baseline stays static. CPU sessions create an anonymous graph view from the
+The LiteRT NPU baseline stays static. CPU sessions create a private temporary graph view from the
 same LiteRT file, changing only build-verified input dimensions, reshape controls, pooling
 rules, and output annotations. Trained weights remain intact. Recognizers preserve AP input
 width, with `floor((W + 3) / 8)` time steps. CPU pooling follows source ONNX VALID semantics,
 including odd widths. Detection specializes both spatial dimensions. Batches run one sample
 at a time and return AP's expected layout and dimensions.
 
-Android 11+ prefers memfd. Older versions or unavailable memfd use a private-cache file
-unlinked before writing and accessed through its descriptor. Both disappear with the session
-without persisting a second model. CPU environments omit vendor providers, request CPU only,
+Starting on 2026-10-10, all Android versions load CPU models through real private-cache files
+to avoid SELinux denials when reopening memfd on some ROMs. Files stay until the model closes;
+unique names and file locks prevent mixing versions or shapes. The next creation reclaims
+files from terminated sessions. See [the SELinux CPU fix](ocr-cpu-selinux-fix.md).
+CPU environments omit vendor providers, request CPU only,
 and check for zero NPU dispatch partitions.
 
 After the source-model quality gate, CI removes AP, NCNN, legacy CnOCR, and RapidOCR default

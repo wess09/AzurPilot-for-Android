@@ -2,7 +2,6 @@ package com.azurpilot.ghio.ocr
 
 import com.google.ai.edge.litert.Model
 import com.google.ai.edge.litert.CompiledModel
-import java.nio.ByteBuffer
 
 /**
  * 读取钉版 LiteRT 的公开 C 模型 API，确认 JIT 确实生成了厂商 dispatch 分区。
@@ -59,12 +58,6 @@ internal object OcrNative {
      * callers must check the return value before using output.
      */
     external fun softmaxInPlace(values: FloatArray, classes: Int): Boolean
-
-    /** 创建会话内匿名模型文件，失败为 -1。 / Creates an anonymous session model, or returns -1. */
-    external fun openMemoryModel(data: ByteBuffer, fallbackDirectory: String, allowMemfd: Boolean): Int
-
-    /** 在模型关闭后释放匿名文件。 / Releases an anonymous file after its model closes. */
-    external fun closeMemoryModel(fd: Int)
 
     /** 返回已编译的实际输出尺寸，失败为 null。 / Returns the compiled output shape, or null. */
     external fun outputShape(model: CompiledModel, runtimeVersion: String): LongArray?

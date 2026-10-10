@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""用 CompiledModel 验证 App 的匿名 CPU 图、动态输出缓冲区和数值。
+"""用 CompiledModel 验证 App 的私有文件 CPU 图、动态输出缓冲区和数值。
 
 运行在 Linux 开发环境，使用同版本系列的 LiteRT CPU；不能代替 Android 驱动测试。
 
-Checks anonymous CPU views, dynamic output buffers, and values through CompiledModel.
+Checks private-file CPU views, dynamic output buffers, and values through CompiledModel.
 Runs on Linux with the LiteRT CPU version family and cannot replace Android driver tests.
 """
 
 import json
-import os
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -28,10 +28,10 @@ def main():
         shapes = [(1, 3, 96, 160)] if spec['kind'] == 'detector' else [(1, 3, 48, w) for w in (317, 319, 320, 321, 324, 640)]
         for shape in shapes:
             data = specialize((ASSETS / conversion['asset']).read_bytes(), conversion['cpu_shape_patches'], shape)
-            fd = os.memfd_create('ocr-litert-cpu', os.MFD_CLOEXEC)
-            try:
-                os.write(fd, data)
-                compiled = CompiledModel.from_file(f'/proc/self/fd/{fd}', HardwareAccelerator.CPU)
+            with tempfile.TemporaryDirectory(prefix='ocr-litert-cpu-') as directory:
+                model_file = Path(directory) / f'{conversion["sha256"]}.tflite'
+                model_file.write_bytes(data)
+                compiled = CompiledModel.from_file(str(model_file), HardwareAccelerator.CPU)
                 inputs = compiled.create_input_buffers(0)
                 outputs = compiled.create_output_buffers(0)
                 values = np.random.default_rng(20261009).uniform(-1, 1, shape).astype(np.float32)
@@ -50,8 +50,6 @@ def main():
                     np.testing.assert_array_equal(actual.argmax(-1), expected.argmax(-1))
                 print(f'COMPILED_CPU_OK {Path(spec["asset"]).name} {shape}: {list(actual.shape)}', flush=True)
                 del inputs, outputs, compiled
-            finally:
-                os.close(fd)
 
 
 if __name__ == '__main__':

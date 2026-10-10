@@ -175,6 +175,7 @@ internal class OcrWorkerServer(
                 runCatching {
                     send(output, buildJsonObject {
                         put("ok", false)
+                        if (error is OcrCpuInitializationException) put("error_code", "cpu_initialization_failed")
                         put("error", error.message?.take(300) ?: "OCR request failed")
                     })
                 }
