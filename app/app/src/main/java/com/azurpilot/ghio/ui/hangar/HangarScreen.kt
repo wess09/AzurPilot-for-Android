@@ -36,6 +36,7 @@ import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.ui.components.AzurPilotControlPanel
 import com.azurpilot.ghio.ui.components.AzurPilotLogBoard
+import com.azurpilot.ghio.ui.components.ScreenSaverButton
 import org.koin.compose.koinInject
 
 /**
@@ -131,6 +132,7 @@ fun HangarScreen(
                 showGateway = true,
                 showLog = false,
             )
+            ScreenSaverButton()
             AzurPilotLogBoard(
                 lines = run.logTail,
                 linesCount = run.logLines,

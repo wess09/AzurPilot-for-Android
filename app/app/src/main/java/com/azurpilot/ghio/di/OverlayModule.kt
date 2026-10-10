@@ -32,6 +32,8 @@ val overlayModule = module {
             context = androidContext(),
             hostState = get(),
             appSettings = get(),
+            runController = get(),
+            repository = get(),
         )
     }
 }

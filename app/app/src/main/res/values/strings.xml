@@ -128,8 +128,16 @@
     <string name="host_state_display_none">未创建</string>
 
     <!-- 运行期屏保 -->
-    <string name="screensaver_idle">Runtime 守护中…</string>
-    <string name="screensaver_swipe_to_unlock">向右滑动解锁</string>
+    <string name="screensaver_idle">等待任务</string>
+    <string name="screensaver_swipe_to_unlock">拖到最右侧解锁</string>
+    <string name="screensaver_title">息屏挂机</string>
+    <string name="screensaver_auto">任务启动时自动进入</string>
+    <string name="screensaver_description">下次启动任务时，以最低亮度黑色遮罩防止误触。显示时间和任务状态，每 10 分钟移动内容，拖动滑块解锁。</string>
+    <string name="screensaver_running">挂机运行中</string>
+    <string name="screensaver_connecting">正在连接运行环境</string>
+    <string name="screensaver_battery">%1$d%%</string>
+    <string name="screensaver_charging">正在充电</string>
+    <string name="screensaver_show_failed">无法打开息屏挂机，请检查悬浮窗权限</string>
 
     <!-- 定时任务 -->
 

@@ -128,8 +128,16 @@
     <string name="host_state_display_none">未作成</string>
 
     <!-- 実行中の画面消灯 -->
-    <string name="screensaver_idle">Runtime 常駐中…</string>
-    <string name="screensaver_swipe_to_unlock">右へスワイプして解除</string>
+    <string name="screensaver_idle">タスク待機中</string>
+    <string name="screensaver_swipe_to_unlock">右端までスライドして解除</string>
+    <string name="screensaver_title">画面を暗くして実行</string>
+    <string name="screensaver_auto">タスク開始時に自動で有効にする</string>
+    <string name="screensaver_description">次のタスク開始時に最低輝度の黒い画面で誤操作を防ぎます。時刻とタスクの状態を表示し、10 分ごとに位置を移動します。スライダーで解除できます。</string>
+    <string name="screensaver_running">自動操作を実行中</string>
+    <string name="screensaver_connecting">実行環境に接続中</string>
+    <string name="screensaver_battery">%1$d%%</string>
+    <string name="screensaver_charging">充電中</string>
+    <string name="screensaver_show_failed">画面を暗くできません。重ねて表示する権限を確認してください。</string>
 
     <!-- スケジュール -->
 

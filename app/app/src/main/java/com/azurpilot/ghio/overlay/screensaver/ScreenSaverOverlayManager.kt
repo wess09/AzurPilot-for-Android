@@ -2,8 +2,6 @@ package com.azurpilot.ghio.overlay.screensaver
 
 import android.content.Context
 import android.graphics.PixelFormat
-import android.graphics.Rect
-import android.os.Build
 import android.view.Gravity
 import android.view.WindowManager
 import androidx.compose.runtime.collectAsState
@@ -14,6 +12,8 @@ import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.overlay.OverlayViewModelOwner
+import com.azurpilot.ghio.proot.AzurPilotRepository
+import com.azurpilot.ghio.proot.AzurPilotRunController
 import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.settings.AppSettingsGateway
 import com.azurpilot.ghio.theme.AzurPilotTheme
@@ -24,6 +24,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -31,24 +32,27 @@ import timber.log.Timber
 /**
  * 后台模式的环境期屏保
  *
- * 仅 [RunMode.BACKGROUND] 下工作：环境运行期间用一块全黑悬浮层压住屏幕
+ * 仅 [RunMode.BACKGROUND] 下工作：用一块全黑悬浮层压住屏幕
  * （TYPE_APPLICATION_OVERLAY，需 SYSTEM_ALERT_WINDOW），保屏保亮度双管齐下，
  * 让后台挂机看起来像熄屏。挂载与移除都在主线程；[setup] 后自观察运行模式
- * 与环境态，任务结束自动收起
+ * 与环境态；自动进入跟随调度器或工具启动，任务或环境停止时收起。
  *
  * The screensaver shown over the environment while in background mode.
  *
- * Works in [RunMode.BACKGROUND] only: while the environment runs, a full-black
+ * Works in [RunMode.BACKGROUND] only: a full-black
  * overlay layer (TYPE_APPLICATION_OVERLAY, requires SYSTEM_ALERT_WINDOW)
  * covers the screen, pairing keep-screen-on with minimum brightness so
  * background idle looks like the screen is off. Mount and removal happen on
  * the main thread; after [setup] the manager observes the run mode and the
- * environment state on its own, dismissing automatically when the task ends.
+ * environment state. Automatic entry follows scheduler or tool startup, and stopping the run or
+ * environment dismisses the overlay.
  */
 class ScreenSaverOverlayManager(
     private val context: Context,
     private val hostState: HostState,
     private val appSettings: AppSettingsGateway,
+    private val runController: AzurPilotRunController,
+    private val repository: AzurPilotRepository,
 ) {
 
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -62,6 +66,7 @@ class ScreenSaverOverlayManager(
 
     private var composeView: ComposeView? = null
     private var hostJob: Job? = null
+    private var setupJob: Job? = null
 
     private val _isShowing = MutableStateFlow(false)
 
@@ -76,7 +81,8 @@ class ScreenSaverOverlayManager(
      * idempotent.
      */
     fun setup() {
-        scope.launch {
+        if (setupJob != null) return
+        setupJob = scope.launch {
             appSettings.runMode.collect { mode ->
                 when (mode) {
                     RunMode.BACKGROUND -> observeHost()
@@ -92,19 +98,25 @@ class ScreenSaverOverlayManager(
     private fun observeHost() {
         if (hostJob != null) return
         hostJob = scope.launch {
+            var wasRunning = false
             var wasUp = hostState.snapshot.value.environmentUp
-            hostState.snapshot.collect { snapshot ->
-                val up = snapshot.environmentUp
-                when {
-                    // 开关只管「自动盖」；手动盖上的那次不受它影响
-                    !wasUp && up ->
-                        if (appSettings.screenSaverEnabled.value) show()
+            combine(hostState.snapshot, runController.state) { snapshot, run -> snapshot to run }
+                .collect { (snapshot, run) ->
+                    val up = snapshot.environmentUp
+                    // 状态接口短暂断线不等于任务结束，保留上次运行态以免突然亮屏。
+                    val running = up && if (run.reachable) {
+                        run.runnerAlive || run.toolAlive
+                    } else wasRunning
+                    when {
+                        // 主页会自动准备环境，只有任务启动才应触发自动遮罩。
+                        !wasRunning && running ->
+                            if (appSettings.screenSaverEnabled.value) show()
 
-                    // 环境撤了就收，别让用户回来面对一块黑屏还得先滑一下
-                    wasUp && !up -> hide()
+                        (wasUp && !up) || (wasRunning && !running) -> hide()
+                    }
+                    wasRunning = running
+                    wasUp = up
                 }
-                wasUp = up
-            }
         }
     }
 
@@ -144,7 +156,10 @@ class ScreenSaverOverlayManager(
                 _isShowing.value = true
                 Timber.d("Screen saver shown")
             }
-            .onFailure { Timber.e(it, "Failed to show screen saver") }
+            .onFailure {
+                view.disposeComposition()
+                Timber.e(it, "Failed to show screen saver")
+            }
         _isShowing.value
     }
 
@@ -156,15 +171,23 @@ class ScreenSaverOverlayManager(
      */
     suspend fun hide() = withContext(Dispatchers.Main.immediate) {
         val view = composeView ?: return@withContext
-        composeView = null
-        _isShowing.value = false
-        viewModelOwner.stop()
         runCatching { windowManager.removeView(view) }
-            .onSuccess { Timber.d("Screen saver dismissed") }
+            .onSuccess {
+                view.disposeComposition()
+                composeView = null
+                _isShowing.value = false
+                viewModelOwner.stop()
+                Timber.d("Screen saver dismissed")
+            }
             .onFailure { Timber.e(it, "Failed to remove screen saver") }
     }
 
-    /** 构建屏保视图：挂独立 owner、恒暗主题，并排除底部手势区 / Builds the screensaver view: own owner, always-dark theme, and a bottom gesture-exclusion zone. */
+    /**
+     * 构建恒暗主题的独立组合，复用现有仓库热流，不新增网关订阅。
+     *
+     * Builds an independent always-dark composition from existing repository flows without adding
+     * gateway subscriptions.
+     */
     private fun createView(): ComposeView = ComposeView(context).apply {
         setViewTreeLifecycleOwner(viewModelOwner)
         setViewTreeViewModelStoreOwner(viewModelOwner)
@@ -172,19 +195,19 @@ class ScreenSaverOverlayManager(
         setContent {
             // 屏保恒为暗色：整块屏幕本来就该压到最黑
             AzurPilotTheme(darkTheme = true) {
+                val run by runController.state.collectAsState()
+                val instances by repository.instances.collectAsState()
+                val overview by repository.overview.collectAsState()
+                val connected by repository.connected.collectAsState()
+                val schema by repository.schema.collectAsState()
                 ScreenSaverView(
-                    // 桥没有日志通道，恒 null：View 落回 screensaver_idle 兜底文案
-                    latestLog = MutableStateFlow<String?>(null),
+                    run = run,
+                    instances = instances,
+                    overview = overview,
+                    connected = connected,
+                    schema = schema,
                     onUnlock = { scope.launch { hide() } },
                 )
-            }
-        }
-        // 排掉底部手势区，不然系统的返回手势会把解锁条的横向拖拽抢走
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
-                val excluded = (v.resources.displayMetrics.density * GESTURE_EXCLUSION_DP).toInt()
-                v.systemGestureExclusionRects =
-                    listOf(Rect(0, v.height - excluded, v.width, v.height))
             }
         }
     }
@@ -224,8 +247,5 @@ class ScreenSaverOverlayManager(
     private companion object {
         /** 0f 在部分 ROM 上被当成「跟随系统」，给一个够小但非零的值 / 0f is treated as "follow system" on some ROMs, so a small-but-nonzero value is used. */
         const val MIN_BRIGHTNESS = 0.01f
-
-        /** 覆盖三大厂的手势条高度还有余量；解锁条本身离底 56dp，不会被这块挡住 / Covers the gesture-bar height of the three major OEMs with margin; the unlock bar itself sits 56dp above the bottom, clear of this zone. */
-        const val GESTURE_EXCLUSION_DP = 120
     }
 }

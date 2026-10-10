@@ -128,8 +128,16 @@
     <string name="host_state_display_none">not created</string>
 
     <!-- Screen saver -->
-    <string name="screensaver_idle">Guarding Runtime…</string>
-    <string name="screensaver_swipe_to_unlock">Swipe right to unlock</string>
+    <string name="screensaver_idle">Waiting for tasks</string>
+    <string name="screensaver_swipe_to_unlock">Slide all the way to unlock</string>
+    <string name="screensaver_title">Dim screen</string>
+    <string name="screensaver_auto">Enter automatically when a run starts</string>
+    <string name="screensaver_description">On the next run, a black overlay at minimum brightness prevents accidental touches. Time and task status move every 10 minutes. Drag the slider to unlock.</string>
+    <string name="screensaver_running">Automation running</string>
+    <string name="screensaver_connecting">Connecting to runtime</string>
+    <string name="screensaver_battery">%1$d%%</string>
+    <string name="screensaver_charging">Charging</string>
+    <string name="screensaver_show_failed">Unable to dim the screen. Check the overlay permission.</string>
 
     <!-- Schedules -->
 

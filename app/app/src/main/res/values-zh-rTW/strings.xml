@@ -128,8 +128,16 @@
     <string name="host_state_display_none">未建立</string>
 
     <!-- 執行期關螢幕 -->
-    <string name="screensaver_idle">Runtime 守護中…</string>
-    <string name="screensaver_swipe_to_unlock">向右滑動解鎖</string>
+    <string name="screensaver_idle">等待任務</string>
+    <string name="screensaver_swipe_to_unlock">拖到最右側解鎖</string>
+    <string name="screensaver_title">息屏掛機</string>
+    <string name="screensaver_auto">任務啟動時自動進入</string>
+    <string name="screensaver_description">下次啟動任務時，以最低亮度黑色遮罩防止誤觸。顯示時間和任務狀態，每 10 分鐘移動內容，拖動滑塊解鎖。</string>
+    <string name="screensaver_running">掛機執行中</string>
+    <string name="screensaver_connecting">正在連線執行環境</string>
+    <string name="screensaver_battery">%1$d%%</string>
+    <string name="screensaver_charging">正在充電</string>
+    <string name="screensaver_show_failed">無法開啟息屏掛機，請檢查懸浮視窗權限</string>
 
     <!-- 排程任務 -->
 

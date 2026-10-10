@@ -76,6 +76,7 @@ import com.azurpilot.ghio.settings.SettingsIntent
 import com.azurpilot.ghio.settings.SettingsUiState
 import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.ui.components.MirrorSourcePicker
+import com.azurpilot.ghio.ui.components.ScreenSaverSettingsCard
 import com.azurpilot.ghio.ui.components.AppCard
 import com.azurpilot.ghio.ui.components.AppFieldLabel
 import com.azurpilot.ghio.ui.components.AppInfoRow
@@ -307,6 +308,7 @@ fun DisplaySettingsPage(
             AppFieldLabel(stringResource(R.string.settings_language))
             LanguageChoice(onIntent)
         }
+        ScreenSaverSettingsCard()
     }
 }
 

@@ -5,414 +5,479 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
+import android.text.format.DateFormat
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.BatteryChargingFull
+import androidx.compose.material.icons.outlined.BatteryStd
+import androidx.compose.material.icons.outlined.CloudOff
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.NightsStay
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.TaskAlt
+import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.azurpilot.ghio.R
+import com.azurpilot.ghio.proot.AzurPilotInstance
+import com.azurpilot.ghio.proot.AzurPilotOverview
+import com.azurpilot.ghio.proot.AzurPilotRunState
+import com.azurpilot.ghio.proot.AzurPilotSchema
+import com.azurpilot.ghio.proot.AzurPilotStatus
+import com.azurpilot.ghio.proot.AzurPilotTaskState
 import com.azurpilot.ghio.theme.AppTokens
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import java.time.LocalTime
+import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.roundToInt
 
 /**
- * 屏保自成一套视觉，不套用 `App*` 组件
+ * 渲染最低亮度遮罩中的 MD3 时钟、任务状态和滑块；在主线程组合。
  *
- * 这一层的取值目标只有两个：把整屏压到最黑（省电、防烧屏），以及让误触做不成任何事
- * 所以配色是写死的纯黑加白色低透明度，不吃 colorScheme
+ * 所有可见内容每十分钟整体换位，漂移边界来自实际布局尺寸；拖动期间延后换位。
+ * 时间独立按分钟更新，任务仅取正在运行的实例，避免显示用户正在浏览的其他配置。
  *
- * The screensaver keeps a visual system of its own and reuses no `App*`
- * components.
+ * Renders the MD3 clock, task status, and unlock slider inside the dim overlay on the main thread.
  *
- * This layer optimizes for exactly two goals: press the whole screen to black
- * (power saving, burn-in protection) and make accidental touches accomplish
- * nothing. Hence the hard-coded pure black with low-alpha white, ignoring the
- * colorScheme.
- */
-private object ScreenSaverDimens {
-    /** 时钟；M3 的 displayLarge 只有 34sp，隔着一米看不清 / The clock size; M3's displayLarge is only 34sp, illegible from a meter away. */
-    val ClockFontSize: TextUnit = 72.sp
-
-    /** 解锁条：轨道、滑块与轨道内边距 / The unlock bar: track, thumb, and track padding. */
-    val TrackHeight: Dp = 60.dp
-    val ThumbDiameter: Dp = 48.dp
-    val TrackPadding: Dp = 6.dp
-
-    /** 解锁条离底的距离；再低会压到手势条上 / The unlock bar's bottom inset; any lower and it lands on the gesture bar. */
-    val BarBottomInset: Dp = 56.dp
-
-    /** 解锁条左右留白，同时也是它水平漂移的余量上限 / The bar's horizontal insets, which also cap its horizontal drift. */
-    val BarSideInset: Dp = 32.dp
-}
-
-/**
- * 屏保主视图：时钟 / 电量 / 最新日志 + 滑动解锁条
- *
- * 全部内容按 [DRIFT_INTERVAL_MS] 一拍做防烧屏随机漂移（解锁条上大下小的独立漂移
- * 幅度）；黑底白字、低透明度，整块屏幕压到最暗。主线程组合，由
- * [ScreenSaverOverlayManager] 挂在系统悬浮窗里
- *
- * The screensaver's main view: clock / battery / latest log plus the
- * slide-to-unlock bar.
- *
- * Everything drifts randomly for burn-in protection on one
- * [DRIFT_INTERVAL_MS] beat (the bar drifts with its own larger-up,
- * smaller-down amplitude); black background, white text, low alpha — the
- * whole screen pressed to near-black. Composed on the main thread, mounted
- * inside the system overlay window by [ScreenSaverOverlayManager].
- *
- * @param latestLog 最新一条日志；null 时展示「空闲」兜底文案 / The latest log
- *   line; the "idle" fallback shows when null
- * @param onUnlock 解锁成功回调，由宿主收起屏保 / The unlock callback; the host
- *   dismisses the screensaver
- * @param modifier 外部修饰符 / Outer modifier
+ * All visible content changes position every ten minutes within measured layout bounds; movement
+ * waits until dragging finishes. The clock updates independently each minute, and task information
+ * belongs to the running instance rather than another configuration the user is browsing.
  */
 @Composable
 fun ScreenSaverView(
-    latestLog: StateFlow<String?>,
+    run: AzurPilotRunState,
+    instances: List<AzurPilotInstance>,
+    overview: AzurPilotOverview?,
+    connected: Boolean,
+    schema: AzurPilotSchema?,
     onUnlock: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val log by latestLog.collectAsState()
-    val batteryState = rememberBatteryState()
-    var currentTime by remember { mutableStateOf(LocalTime.now()) }
-    val timeFormatter = remember { DateTimeFormatter.ofPattern("HH:mm") }
-
-    val configuration = LocalConfiguration.current
-    val density = LocalDensity.current
-    // 漂移范围以 px 存，与 offset { IntOffset } 的单位一致
-    val maxOffsetXPx = with(density) { (configuration.screenWidthDp / 8).dp.roundToPx() }
-    val maxOffsetYPx = with(density) { (configuration.screenHeightDp / 4).dp.roundToPx() }
-
-    var burnInOffsetX by remember { mutableIntStateOf(0) }
-    var burnInOffsetY by remember { mutableIntStateOf(0) }
-
-    // 解锁条另算一份漂移：它锚在底部，垂直向上空间充足、向下受 BarBottomInset 限制，故上大下小
-    val barDriftXPx = with(density) { AppTokens.Spacing.xl.roundToPx() }
-    val barDriftUpPx = with(density) { 80.dp.roundToPx() }
-    val barDriftDownPx = with(density) { 40.dp.roundToPx() }
-    var barOffsetX by remember { mutableIntStateOf(0) }
-    var barOffsetY by remember { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    val locale = LocalConfiguration.current.locales[0]
+    val battery = rememberBatteryState()
+    var now by remember { mutableStateOf(LocalDateTime.now()) }
+    val timeFormatter = remember(locale, DateFormat.is24HourFormat(context)) {
+        DateTimeFormatter.ofPattern(
+            if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a", locale,
+        )
+    }
+    val dateFormatter = remember(locale) {
+        DateTimeFormatter.ofPattern(DateFormat.getBestDateTimePattern(locale, "MMMEd"), locale)
+    }
+    var bounds by remember { mutableStateOf(IntSize.Zero) }
+    var contentSize by remember { mutableStateOf(IntSize.Zero) }
+    var position by remember { mutableIntStateOf(0) }
+    var interacting by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         while (true) {
-            currentTime = LocalTime.now()
+            now = LocalDateTime.now()
+            delay(CLOCK_INTERVAL_MS - System.currentTimeMillis().mod(CLOCK_INTERVAL_MS))
+        }
+    }
+    LaunchedEffect(Unit) {
+        while (true) {
             delay(DRIFT_INTERVAL_MS)
-            burnInOffsetX = if (maxOffsetXPx > 0) (-maxOffsetXPx..maxOffsetXPx).random() else 0
-            burnInOffsetY = if (maxOffsetYPx > 0) (-maxOffsetYPx..maxOffsetYPx).random() else 0
-            barOffsetX = (-barDriftXPx..barDriftXPx).random()
-            barOffsetY = (-barDriftUpPx..barDriftDownPx).random()
+            // 滑块在手指下面换位会中断手势，所以等松手与回弹结束后再移动。
+            while (interacting) delay(100L)
+            position = (position + 1) % BurnInPositions.size
         }
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black),
-    ) {
-        Column(
+    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+        Box(
             modifier = Modifier
-                .align(Alignment.Center)
-                .offset { IntOffset(burnInOffsetX, burnInOffsetY) },
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.lg),
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(AppTokens.Spacing.lg)
+                .onSizeChanged { bounds = it },
         ) {
-            Text(
-                text = currentTime.format(timeFormatter),
-                style = MaterialTheme.typography.displayLarge.copy(
-                    fontSize = ScreenSaverDimens.ClockFontSize,
-                    fontWeight = FontWeight.Light,
-                ),
-                color = Color.White.copy(alpha = 0.5f),
-                maxLines = 1,
-            )
-
-            Text(
-                text = "${batteryState.level}%",
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White.copy(alpha = if (batteryState.isCharging) 0.7f else 0.4f),
-            )
-
-            Text(
-                text = log ?: stringResource(R.string.screensaver_idle),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = ScreenSaverDimens.BarSideInset),
-            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset {
+                        val (x, y) = BurnInPositions[position]
+                        IntOffset(
+                            ((bounds.width - contentSize.width).coerceAtLeast(0) * x / 2).roundToInt(),
+                            ((bounds.height - contentSize.height).coerceAtLeast(0) * y / 2).roundToInt(),
+                        )
+                    }
+                    .widthIn(max = 360.dp)
+                    .fillMaxWidth(0.84f)
+                    .onSizeChanged { contentSize = it }
+                    .verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.lg),
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = now.format(timeFormatter),
+                        style = MaterialTheme.typography.displayLarge,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = now.format(dateFormatter),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    )
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(AppTokens.Spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = if (battery.isCharging) {
+                            Icons.Outlined.BatteryChargingFull
+                        } else {
+                            Icons.Outlined.BatteryStd
+                        },
+                        contentDescription = if (battery.isCharging) {
+                            stringResource(R.string.screensaver_charging)
+                        } else null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                        modifier = Modifier.size(AppTokens.IconSize.sm),
+                    )
+                    Text(
+                        text = stringResource(R.string.screensaver_battery, battery.level),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+                    )
+                }
+                ScreenSaverTask(run, instances, overview, connected, schema)
+                SlideToUnlockBar(
+                    onUnlock = onUnlock,
+                    onInteractingChanged = { interacting = it },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
-
-        SlideToUnlockBar(
-            onUnlock = onUnlock,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .offset { IntOffset(barOffsetX, barOffsetY) }
-                .padding(bottom = ScreenSaverDimens.BarBottomInset)
-                .padding(horizontal = ScreenSaverDimens.BarSideInset)
-                .fillMaxWidth(),
-        )
     }
 }
 
 /**
- * 只认横向拖拽的解锁条
+ * 显示运行实例的任务图标与名称；离线、空闲、等待和工具运行分别提供兜底。
  *
- * 不做成按钮：屏保盖着的时候口袋里的一次误触就该什么都不发生
+ * Displays the running instance's task icon and name with offline, idle, waiting, and tool fallbacks.
+ */
+@Composable
+private fun ScreenSaverTask(
+    run: AzurPilotRunState,
+    instances: List<AzurPilotInstance>,
+    overview: AzurPilotOverview?,
+    connected: Boolean,
+    schema: AzurPilotSchema?,
+) {
+    val instance = instances.firstOrNull { it.name == run.runningConfig }
+    val task = if (run.runnerAlive && connected) {
+        instance?.takeIf { it.status == AzurPilotStatus.Running }?.currentTask
+            ?.takeIf { it.isNotBlank() }
+            ?: overview?.takeIf {
+                it.instance == run.runningConfig && it.status == AzurPilotStatus.Running
+            }?.tasks?.firstOrNull { it.state == AzurPilotTaskState.Running }?.name
+    } else null
+    val (icon, label) = when {
+        !run.reachable -> Icons.Outlined.CloudOff to stringResource(R.string.screensaver_connecting)
+        run.toolAlive -> Icons.Outlined.TouchApp to stringResource(
+            if (run.toolName == AzurPilotRunState.TOOL_EVENT_STORY) {
+                R.string.tool_event_story
+            } else R.string.tool_semi_auto,
+        )
+        task != null -> Icons.Outlined.TaskAlt to (schema?.taskTitle(task) ?: task)
+        run.runnerAlive -> Icons.Outlined.Schedule to stringResource(R.string.screensaver_running)
+        else -> Icons.Outlined.NightsStay to stringResource(R.string.screensaver_idle)
+    }
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.65f),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(AppTokens.Spacing.lg),
+            horizontalArrangement = Arrangement.spacedBy(AppTokens.Spacing.md),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
+                    modifier = Modifier.padding(AppTokens.Spacing.sm).size(AppTokens.IconSize.md),
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = run.runningConfig ?: stringResource(R.string.screensaver_title),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 只允许从滑块开始拖动到轨道末端后松手解锁；取消与短划回弹，无速度捷径。
  *
- * The slide-to-unlock bar, responding to horizontal drags only.
- *
- * Deliberately not a button: while the screensaver covers the screen, a stray
- * pocket touch should accomplish exactly nothing.
- *
- * @param onUnlock 拖满或快扫达标后回调 / Invoked after the drag passes the
- *   distance or velocity threshold
- * @param modifier 外部修饰符，负责定位与宽度 / Outer modifier owning placement
- *   and width
+ * Unlocks only after dragging the thumb to the end and releasing; cancelled or short drags return
+ * to the start without a velocity shortcut. Accessibility exposes a deliberate custom action.
  */
 @Composable
 private fun SlideToUnlockBar(
     onUnlock: () -> Unit,
+    onInteractingChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
-    val thumbDiameterPx = with(density) { ScreenSaverDimens.ThumbDiameter.toPx() }
-    val trackPaddingPx = with(density) { ScreenSaverDimens.TrackPadding.toPx() }
-
-    var trackWidthPx by remember { mutableFloatStateOf(0f) }
-    val maxOffset = (trackWidthPx - thumbDiameterPx - trackPaddingPx * 2).coerceAtLeast(0f)
-
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    val releaseAnim = remember { Animatable(0f) }
-    var isAnimating by remember { mutableStateOf(false) }
+    val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
-
-    val displayOffset = if (isAnimating) releaseAnim.value else dragOffset
+    val unlock by rememberUpdatedState(onUnlock)
+    val interactionChanged by rememberUpdatedState(onInteractingChanged)
+    val thumbPx = with(density) { ThumbDiameter.toPx() }
+    val paddingPx = with(density) { TrackPadding.toPx() }
+    var trackWidth by remember { mutableFloatStateOf(0f) }
+    val maxOffset = (trackWidth - thumbPx - paddingPx * 2).coerceAtLeast(0f)
+    var offset by remember { mutableFloatStateOf(0f) }
+    val animation = remember { Animatable(0f) }
+    var settling by remember { mutableStateOf(false) }
+    var releaseJob by remember { mutableStateOf<Job?>(null) }
+    val displayOffset = (if (settling) animation.value else offset).coerceIn(0f, maxOffset)
     val progress = if (maxOffset > 0f) (displayOffset / maxOffset).coerceIn(0f, 1f) else 0f
+    val unlockLabel = stringResource(R.string.screensaver_swipe_to_unlock)
 
-    val shimmerTransition = rememberInfiniteTransition(label = "shimmer")
-    val shimmerPos by shimmerTransition.animateFloat(
-        initialValue = -0.5f,
-        targetValue = 1.5f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(SHIMMER_DURATION_MS, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "shimmerPos",
-    )
-    // 拖到越后面越不需要提示，扫光跟着淡出
-    val shimmerAlpha = (1f - progress) * 0.28f
+    fun release(complete: Boolean) {
+        releaseJob = scope.launch {
+            animation.snapTo(offset)
+            settling = true
+            animation.animateTo(
+                if (complete) maxOffset else 0f,
+                tween(180, easing = FastOutSlowInEasing),
+            )
+            offset = animation.value
+            settling = false
+            interactionChanged(false)
+            if (complete) {
+                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                unlock()
+            }
+        }
+    }
 
-    Box(
+    Surface(
         modifier = modifier
-            .height(ScreenSaverDimens.TrackHeight)
-            .onSizeChanged { trackWidthPx = it.width.toFloat() }
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.13f))
-            .drawBehind {
-                val sweepWidth = size.width * 0.42f
-                drawRect(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color.White.copy(alpha = shimmerAlpha),
-                            Color.Transparent,
-                        ),
-                        startX = shimmerPos * size.width - sweepWidth,
-                        endX = shimmerPos * size.width + sweepWidth,
-                    ),
+            .height(TrackHeight)
+            .onSizeChanged { trackWidth = it.width.toFloat() }
+            .semantics(mergeDescendants = true) {
+                customActions = listOf(CustomAccessibilityAction(unlockLabel) { unlock(); true })
+            },
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
+    ) {
+        Box {
+            Text(
+                text = unlockLabel,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(start = ThumbDiameter, end = AppTokens.Spacing.sm)
+                    .alpha((1f - progress * 2).coerceIn(0f, 1f)),
+            )
+            Box(
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(TrackPadding)
+                    .offset { IntOffset(displayOffset.roundToInt(), 0) }
+                    .size(ThumbDiameter)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.65f))
+                    .pointerInput(maxOffset) {
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                if (settling) offset = animation.value
+                                releaseJob?.cancel()
+                                settling = false
+                                interactionChanged(true)
+                            },
+                            onHorizontalDrag = { change, delta ->
+                                change.consume()
+                                offset = (offset + delta).coerceIn(0f, maxOffset)
+                            },
+                            onDragEnd = { release(maxOffset > 0f && offset >= maxOffset * UNLOCK_RATIO) },
+                            onDragCancel = { release(false) },
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = if (progress > 0f) {
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight
+                    } else Icons.Outlined.Lock,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(AppTokens.IconSize.md),
                 )
             }
-            .draggable(
-                orientation = Orientation.Horizontal,
-                state = rememberDraggableState { delta ->
-                    if (!isAnimating && maxOffset > 0f) {
-                        dragOffset = (dragOffset + delta).coerceIn(0f, maxOffset)
-                    }
-                },
-                onDragStopped = { velocity ->
-                    val unlocked = dragOffset >= maxOffset * UNLOCK_RATIO || velocity > UNLOCK_VELOCITY
-                    if (!isAnimating && maxOffset > 0f) {
-                        scope.launch {
-                            isAnimating = true
-                            releaseAnim.snapTo(dragOffset)
-                            if (unlocked) {
-                                releaseAnim.animateTo(maxOffset, tween(SNAP_DURATION_MS))
-                            }
-                            // 先复位再回调：onUnlock 会销毁这棵 Composition
-                            dragOffset = 0f
-                            if (unlocked) {
-                                releaseAnim.snapTo(0f)
-                            } else {
-                                releaseAnim.animateTo(
-                                    0f,
-                                    spring(
-                                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                                        stiffness = Spring.StiffnessMedium,
-                                    ),
-                                )
-                            }
-                            isAnimating = false
-                            if (unlocked) onUnlock()
-                        }
-                    }
-                },
-            ),
-    ) {
-        Text(
-            text = stringResource(R.string.screensaver_swipe_to_unlock),
-            style = MaterialTheme.typography.bodyLarge.copy(letterSpacing = 3.sp),
-            color = Color.White.copy(alpha = 0.6f),
-            modifier = Modifier
-                .align(Alignment.Center)
-                // 比进度快一倍淡出：手指还没到中间，字就该让位给滑块
-                .alpha((1f - progress * 2f).coerceIn(0f, 1f)),
-        )
-
-        Box(
-            modifier = Modifier
-                .padding(ScreenSaverDimens.TrackPadding)
-                .size(ScreenSaverDimens.ThumbDiameter)
-                .offset { IntOffset(displayOffset.toInt(), 0) }
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.5f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = Color.Black,
-                modifier = Modifier.size(AppTokens.IconSize.md),
-            )
         }
     }
 }
 
 /**
- * 电池快照：电量百分比与充电态
+ * 保存电池广播中的电量与充电状态；广播初值缺失时显示零，避免虚构满电。
  *
- * A battery snapshot: the level percentage and the charging state.
+ * Holds battery level and charging state; a missing initial broadcast shows zero rather than full.
  *
- * @property level 电量百分比（0–100） / Battery percentage (0–100)
- * @property isCharging 是否在充电（含「已充满」） / Whether charging is active
- *   (full counts as charging)
+ * @property level 电量百分比 / Battery percentage.
+ * @property isCharging 是否充电或已充满 / Whether charging or fully charged.
  */
-data class BatteryState(val level: Int = 100, val isCharging: Boolean = false)
+private data class BatteryState(val level: Int = 0, val isCharging: Boolean = false)
 
 /**
- * 订阅电量；电量没有可订阅的 API，只有这条粘性广播
+ * 在组合可见期间订阅粘性电量广播，移除遮罩时注销；回调在主线程更新状态。
  *
- * Subscribes to the battery state; there is no subscribable API for the
- * level, only this sticky broadcast.
+ * Subscribes to sticky battery broadcasts while composed and unregisters on dismissal; callbacks
+ * update state on the main thread.
  */
 @Composable
 private fun rememberBatteryState(): BatteryState {
     val context = LocalContext.current
     var state by remember { mutableStateOf(BatteryState()) }
-
     DisposableEffect(context) {
-        val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
-        // 先读粘性广播拿初值再注册，否则首帧只能显示默认的 100%
-        context.registerReceiver(null, filter)?.let { state = it.toBatteryState() ?: state }
-
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context?, intent: Intent?) {
+            override fun onReceive(context: Context?, intent: Intent?) {
                 if (intent?.action != Intent.ACTION_BATTERY_CHANGED) return
-                intent.toBatteryState()?.let { state = it }
+                val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                if (scale <= 0 || level < 0) return
+                val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+                state = BatteryState(
+                    level = (level * 100 / scale).coerceIn(0, 100),
+                    isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                        status == BatteryManager.BATTERY_STATUS_FULL,
+                )
             }
         }
-        context.registerReceiver(receiver, filter)
+        context.registerReceiver(receiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         onDispose { context.unregisterReceiver(receiver) }
     }
     return state
 }
 
 /**
- * 从电量广播提取快照；scale 拿不到时返回 null：算出来的百分比会是负数，不如不更新
+ * 每十分钟移动所有可见内容，满足长时间挂机的防烧屏间隔。
  *
- * Extracts a snapshot from the battery broadcast; returns null when the scale
- * is unavailable — the computed percentage would be negative, better to skip
- * the update than show it.
+ * Moves all visible content every ten minutes during long automation sessions.
  */
-private fun Intent.toBatteryState(): BatteryState? {
-    val level = getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-    val scale = getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-    if (scale <= 0) return null
-    val status = getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-    return BatteryState(
-        level = level * 100 / scale,
-        isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-            status == BatteryManager.BATTERY_STATUS_FULL,
-    )
-}
+private const val DRIFT_INTERVAL_MS = 10 * 60_000L
 
-/** 时钟刷新与防烧屏漂移共用这一拍；再密就是白耗电 / The shared beat for the clock refresh and the burn-in drift; anything denser is wasted power. */
-private const val DRIFT_INTERVAL_MS = 30_000L
+/**
+ * 时钟只显示分钟，下一次刷新对齐分钟边界以免时间滞后。
+ *
+ * Aligns the minute-only clock's next refresh to the minute boundary to avoid stale time.
+ */
+private const val CLOCK_INTERVAL_MS = 60_000L
 
-/** 扫光扫过轨道一轮的时长 / The duration of one shimmer sweep across the track. */
-private const val SHIMMER_DURATION_MS = 2_400
+/**
+ * 末端保留少量容错；速度不会降低所需拖动距离。
+ *
+ * Allows a small end tolerance without letting velocity reduce the required drag distance.
+ */
+private const val UNLOCK_RATIO = 0.95f
 
-/** 松手后滑块吸附动画时长 / The snap animation duration after the thumb is released. */
-private const val SNAP_DURATION_MS = 120
+/**
+ * 提供至少 48dp 的滑块触控区。
+ *
+ * Provides a thumb touch target of at least 48dp.
+ */
+private val ThumbDiameter = 48.dp
 
-/** 拖过七成、或快速轻扫都算解锁——只认前者会让快扫的用户以为条卡住了 / A drag past 70% or a fast flick both unlock — distance alone would leave fast flickers thinking the bar is stuck. */
-private const val UNLOCK_RATIO = 0.75f
+/** 轨道围绕滑块的间距。 / The track's inset around the thumb. */
+private val TrackPadding = 6.dp
 
-/** 快扫判定的速度阈值（px/s） / The velocity threshold (px/s) for the flick unlock. */
-private const val UNLOCK_VELOCITY = 1_000f
+/** 包含滑块与两侧内边距的轨道高度。 / The track height including the thumb and both insets. */
+private val TrackHeight = 60.dp
+
+/**
+ * 在实际剩余空间内交替访问不同区域，保证连续两次不会停在同一位置。
+ *
+ * Alternates regions within the available space so consecutive positions differ.
+ */
+private val BurnInPositions = listOf(
+    0f to 0f, -1f to -1f, 1f to 1f, 0f to -1f, -1f to 1f,
+    1f to -1f, 0f to 1f, -1f to 0f, 1f to 0f,
+)
