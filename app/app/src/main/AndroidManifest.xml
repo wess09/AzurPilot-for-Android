@@ -105,6 +105,16 @@
             android:name="miui.window.CVW_MODE"
             android:value="1" />
 
+        <!-- 独立宿主才能隐藏导航栏；普通应用悬浮窗的层级低于系统栏。 -->
+        <activity
+            android:name=".overlay.screensaver.ScreenSaverActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:theme="@style/Theme.AzurPilotApp.ScreenSaver" />
+
         <!-- 只有启动 Activity 挂启动主题；application 那层保持 Theme.AzurPilotApp，
              否则别的窗口也会顶着首屏底色起来 -->
         <activity

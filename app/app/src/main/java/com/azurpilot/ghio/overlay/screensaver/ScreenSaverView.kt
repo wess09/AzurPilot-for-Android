@@ -10,6 +10,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,6 +62,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -92,13 +95,15 @@ import kotlin.math.roundToInt
 /**
  * 渲染最低亮度遮罩中的 MD3 时钟、任务状态和滑块；在主线程组合。
  *
- * 所有可见内容每十分钟整体换位，漂移边界来自实际布局尺寸；拖动期间延后换位。
+ * 所有可见内容在无交互三十秒后整体平移一个物理像素，边界来自实际布局尺寸。
+ * 触摸与回弹期间暂停，结束后重新计时；容器仅描边，避免大面积常亮底色。
  * 时间独立按分钟更新，任务仅取正在运行的实例，避免显示用户正在浏览的其他配置。
  *
  * Renders the MD3 clock, task status, and unlock slider inside the dim overlay on the main thread.
  *
- * All visible content changes position every ten minutes within measured layout bounds; movement
- * waits until dragging finishes. The clock updates independently each minute, and task information
+ * All visible content moves one physical pixel after each thirty seconds without interaction,
+ * within measured layout bounds. Touches and settling pause and restart the timer. Containers use
+ * outlines to avoid large illuminated fills. The clock updates each minute, and task information
  * belongs to the running instance rather than another configuration the user is browsing.
  */
 @Composable
@@ -125,8 +130,10 @@ fun ScreenSaverView(
     }
     var bounds by remember { mutableStateOf(IntSize.Zero) }
     var contentSize by remember { mutableStateOf(IntSize.Zero) }
-    var position by remember { mutableIntStateOf(0) }
+    var drift by remember { mutableStateOf(ScreenSaverDrift()) }
     var interacting by remember { mutableStateOf(false) }
+    var touching by remember { mutableStateOf(false) }
+    var touchSequence by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -134,16 +141,35 @@ fun ScreenSaverView(
             delay(CLOCK_INTERVAL_MS - System.currentTimeMillis().mod(CLOCK_INTERVAL_MS))
         }
     }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(touching, interacting, touchSequence) {
+        if (touching || interacting) return@LaunchedEffect
         while (true) {
             delay(DRIFT_INTERVAL_MS)
-            // 滑块在手指下面换位会中断手势，所以等松手与回弹结束后再移动。
-            while (interacting) delay(100L)
-            position = (position + 1) % BurnInPositions.size
+            drift = drift.step(
+                maxX = ((bounds.width - contentSize.width).coerceAtLeast(0) / 2)
+                    .coerceAtMost(MAX_DRIFT_PX),
+                maxY = ((bounds.height - contentSize.height).coerceAtLeast(0) / 2)
+                    .coerceAtMost(MAX_DRIFT_PX),
+            )
         }
     }
 
-    Box(modifier = modifier.fillMaxSize().background(Color.Black)) {
+    Box(
+        modifier = modifier.fillMaxSize().background(Color.Black).pointerInput(Unit) {
+            // 只观察触摸，不消费事件；滚动与滑块仍由各自的手势处理器接收。
+            awaitPointerEventScope {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val pressed = event.changes.any { it.pressed }
+                    if (pressed != touching) {
+                        touching = pressed
+                        // 快速轻点可能在同一帧内按下又松开，用序号保证空闲计时仍会重置。
+                        touchSequence += 1
+                    }
+                }
+            }
+        },
+    ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -155,10 +181,11 @@ fun ScreenSaverView(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .offset {
-                        val (x, y) = BurnInPositions[position]
+                        val maxX = (bounds.width - contentSize.width).coerceAtLeast(0) / 2
+                        val maxY = (bounds.height - contentSize.height).coerceAtLeast(0) / 2
                         IntOffset(
-                            ((bounds.width - contentSize.width).coerceAtLeast(0) * x / 2).roundToInt(),
-                            ((bounds.height - contentSize.height).coerceAtLeast(0) * y / 2).roundToInt(),
+                            drift.x.coerceIn(-maxX, maxX),
+                            drift.y.coerceIn(-maxY, maxY),
                         )
                     }
                     .widthIn(max = 360.dp)
@@ -250,7 +277,8 @@ private fun ScreenSaverTask(
     }
     Surface(
         shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.65f),
+        color = Color.Black,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
@@ -260,7 +288,8 @@ private fun ScreenSaverTask(
         ) {
             Surface(
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                color = Color.Black,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
             ) {
                 Icon(
                     imageVector = icon,
@@ -344,7 +373,8 @@ private fun SlideToUnlockBar(
                 customActions = listOf(CustomAccessibilityAction(unlockLabel) { unlock(); true })
             },
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
+        color = Color.Black,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
     ) {
         Box {
             Text(
@@ -365,7 +395,8 @@ private fun SlideToUnlockBar(
                     .offset { IntOffset(displayOffset.roundToInt(), 0) }
                     .size(ThumbDiameter)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.65f))
+                    .background(Color.Black)
+                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape)
                     .pointerInput(maxOffset) {
                         detectHorizontalDragGestures(
                             onDragStart = {
@@ -389,7 +420,7 @@ private fun SlideToUnlockBar(
                         Icons.AutoMirrored.Filled.KeyboardArrowRight
                     } else Icons.Outlined.Lock,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary,
+                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.65f),
                     modifier = Modifier.size(AppTokens.IconSize.md),
                 )
             }
@@ -439,11 +470,14 @@ private fun rememberBatteryState(): BatteryState {
 }
 
 /**
- * 每十分钟移动所有可见内容，满足长时间挂机的防烧屏间隔。
+ * 每三十秒无交互时只移动一像素，避免大幅换位与持续动画。
  *
- * Moves all visible content every ten minutes during long automation sessions.
+ * Moves one pixel after each idle thirty seconds without jumps or continuous animation.
  */
-private const val DRIFT_INTERVAL_MS = 10 * 60_000L
+private const val DRIFT_INTERVAL_MS = 30_000L
+
+/** 物理像素范围，不随屏幕密度放大。 / Physical pixel range, independent of display density. */
+private const val MAX_DRIFT_PX = 24
 
 /**
  * 时钟只显示分钟，下一次刷新对齐分钟边界以免时间滞后。
@@ -471,13 +505,3 @@ private val TrackPadding = 6.dp
 
 /** 包含滑块与两侧内边距的轨道高度。 / The track height including the thumb and both insets. */
 private val TrackHeight = 60.dp
-
-/**
- * 在实际剩余空间内交替访问不同区域，保证连续两次不会停在同一位置。
- *
- * Alternates regions within the available space so consecutive positions differ.
- */
-private val BurnInPositions = listOf(
-    0f to 0f, -1f to -1f, 1f to 1f, 0f to -1f, -1f to 1f,
-    1f to -1f, 0f to 1f, -1f to 0f, 1f to 0f,
-)

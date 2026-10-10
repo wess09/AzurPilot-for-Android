@@ -137,7 +137,7 @@
     <string name="screensaver_swipe_to_unlock">拖到最右側解鎖</string>
     <string name="screensaver_title">息屏掛機</string>
     <string name="screensaver_auto">任務啟動時自動進入</string>
-    <string name="screensaver_description">下次啟動任務時，以最低亮度黑色遮罩防止誤觸。顯示時間和任務狀態，每 10 分鐘移動內容，拖動滑塊解鎖。</string>
+    <string name="screensaver_description">下次啟動任務時，以最低亮度全螢幕黑色遮罩防止誤觸並隱藏導覽列。時間和任務狀態在閒置時每 30 秒微移，觸控時暫停，拖動滑塊解鎖。</string>
     <string name="screensaver_running">掛機執行中</string>
     <string name="screensaver_connecting">正在連線執行環境</string>
     <string name="screensaver_battery">%1$d%%</string>

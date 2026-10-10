@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 import org.koin.android.ext.android.inject
 
 /**
- * App 唯一的壳 Activity：承载 Compose UI，并处理窗口层面的平台适配
+ * App 主壳 Activity：承载 Compose UI，并处理窗口层面的平台适配
  *
  * 职责：
  * - splash 屏保持到设置异步加载完成才放行首帧
@@ -37,7 +37,7 @@ import org.koin.android.ext.android.inject
  *   供悬浮窗这类拿不到 Configuration 的独立窗口读取
  * - 分发桌面长按快捷方式：启停复用小组件广播链，跳转型经 [ShortcutRequests] 转交
  *
- * The app's sole shell Activity: hosts the Compose UI and handles
+ * The app's main shell Activity: hosts the Compose UI and handles
  * window-level platform adaptations.
  *
  * Responsibilities:
