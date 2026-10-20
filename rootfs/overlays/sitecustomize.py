@@ -1,12 +1,11 @@
-"""仅在 AzurPilot for Android 运行时启用进程、设备、装备码、更新兼容层、后台 NTP 和宿主 OCR。
+"""仅在 AzurPilot for Android 运行时启用兼容层、大世界事件过渡保护、后台 NTP 和宿主 OCR。
 
 本文件被装进 venv site-packages 顶层，任何解释器启动都会经 site 机制自动导入，
 因此必须用 AZURPILOT_ANDROID 环境变量门控：开发机与 CI 的裸 Python 不受影响；
 命中时才给 psutil 打桩、修正虚拟屏前台检测并接入装备码桥；宿主另行注入 OCR 地址时
 安装张量代理。APK 也将本文件放在 PYTHONPATH 根目录，供已有 rootfs 升级使用。
 
-Enables process, device, equipment-code, and update compatibility, background NTP, and host OCR inside the AzurPilot
-for Android runtime.
+Enables compatibility layers, OS event-transition guards, background NTP, and host OCR in the Android runtime.
 
 The file sits at the top of the venv's site-packages, so every interpreter
 startup imports it automatically through the site mechanism; it must therefore
@@ -39,6 +38,10 @@ if os.environ.get("AZURPILOT_ANDROID") == "1":
     from android_capture import install as install_capture
 
     install_capture()
+
+    from android_opsi_event import install as install_opsi_event
+
+    install_opsi_event()
 
     try:
         from android_ntp import install as install_ntp

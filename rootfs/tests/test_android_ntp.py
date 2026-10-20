@@ -149,15 +149,18 @@ class TestAndroidNtpIntegration(unittest.TestCase):
 
     def test_gate_only_enables_ntp_on_android(self):
         names = ('android_process_compat', 'android_equipment', 'android_device',
-                 'android_app_launch', 'android_capture', 'android_update', 'android_ntp')
+                 'android_app_launch', 'android_capture', 'android_opsi_event',
+                 'android_update', 'android_ntp')
         modules = {name: SimpleNamespace(install=Mock()) for name in names}
         script = (ROOT / 'rootfs/overlays/sitecustomize.py').read_text(encoding='utf-8')
         with patch.dict(sys.modules, modules), patch.dict(os.environ, {}, clear=True):
             exec(script, {})
             modules['android_ntp'].install.assert_not_called()
+            modules['android_opsi_event'].install.assert_not_called()
             os.environ['AZURPILOT_ANDROID'] = '1'
             exec(script, {})
             modules['android_ntp'].install.assert_called_once()
+            modules['android_opsi_event'].install.assert_called_once()
 
     def test_packaging_sync_and_build_smoke(self):
         for rel in ('rootfs/build/build-azurpilot.sh', 'app/app/build.gradle.kts',
