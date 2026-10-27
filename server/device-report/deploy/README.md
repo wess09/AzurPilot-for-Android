@@ -31,9 +31,11 @@ GITHUB_TOKEN=<server-only-token>
 GITHUB_REPOSITORY=wess09/AzurPilot-for-Android
 ```
 
-`deploy/private/client-cert.pem` 是正文签名验证使用的公开证书，沿用源站配置。
+`deploy/private/client-cert.pem` 是正文签名验证使用的公开证书，本次已替换为新提供的一组证书。
 这是 HTTP 请求正文签名校验，与管理员在 Cloudflare 边缘配置的 TLS 验证分别执行。
-若替换 App 的正文签名密钥，必须同步替换此公开证书。
+GitHub Actions 的 `AZURPILOT_DEVICE_REPORT_CERT_BASE64` 与
+`AZURPILOT_DEVICE_REPORT_KEY_BASE64` 已同步为该组证书和私钥，供后续 CI 构建使用。
+轮换时必须同时更新这两个 Secrets 和服务端公开证书。
 
 `/srv/agentdock/AgentDock/afa-api-state/state.json` 保存持久化去重状态，更新镜像和重新创建容器时保留。
 状态目录位于构建上下文之外，默认路径为相对于 `deploy/` 的 `../../afa-api-state`。
@@ -90,6 +92,7 @@ docker compose -f deploy/compose.yaml restart api
 
 本次已验证 Go 测试与 vet、Kotlin 编译、本机接口的鉴权与字段校验、重放拒绝、
 请求体限制和容器重新创建后的状态完整性。GitHub 凭据通过只读请求检查，未发布测试评论。
+证书轮换后，已检查新密钥签名可进入字段校验，旧密钥签名被拒绝。
 
 ## English
 
@@ -122,8 +125,11 @@ at mode 0700, with `state.json` at mode 0600. The public certificate may use mod
 State lives outside the build context at `/srv/agentdock/AgentDock/afa-api-state/`, defaulting to
 `../../afa-api-state` relative to `deploy/`. Override it with `AFA_API_STATE_DIR` if needed.
 
-The imported public certificate verifies HTTP body signatures, independently of TLS validation
-at the Cloudflare edge. Replacing the App's body signing key also requires replacing this certificate.
+The public certificate verifies HTTP body signatures, independently of TLS validation
+at the Cloudflare edge. This deployment rotates it to the newly supplied certificate and updates
+the GitHub Actions secrets `AZURPILOT_DEVICE_REPORT_CERT_BASE64` and
+`AZURPILOT_DEVICE_REPORT_KEY_BASE64` to the matching certificate/key pair for future CI builds.
+Credential rotation must update both secrets and the server public certificate together.
 No client private key is included in the image, deployment configuration, or migration backup.
 Private configuration, state, and backups are excluded from Git and Docker build context.
 Run one API instance because the JSON state file does not support concurrent writers.
@@ -149,3 +155,4 @@ Health checks read the local API without creating GitHub comments. Public mTLS i
 Validation covered Go tests/vet, Kotlin compilation, local API authentication and schema checks,
 replay rejection, body limits, and unchanged state after container recreation.
 GitHub credentials were checked through a read-only request without publishing test comments.
+After rotation, signatures from the new key reached schema validation, while the old key was rejected.

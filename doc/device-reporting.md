@@ -94,7 +94,8 @@ Docker 以非 root 用户运行，设置 48 MiB Go 内存目标、96 MiB 硬限�
 
 Docker 部署与迁移步骤见 [Docker 运维说明](../server/device-report/deploy/README.md)。
 生产目录为 `/srv/agentdock/AgentDock/afa-api`；反代上游使用 `http://127.0.0.1:18882`。
-容器沿用源站的正文签名公钥和去重记录；Cloudflare 的客户端 TLS 证书独立在边缘管理。
+容器迁入源站去重记录，并将正文验签公钥与 CI 构建凭据同步换为新证书；
+Cloudflare 的客户端 TLS 证书独立在边缘管理。
 源站原有 systemd 安装方式保留如下，供旧部署维护和回滚使用。
 
 交叉编译并上传二进制及公开客户端证书，不上传客户端私钥：
@@ -231,8 +232,9 @@ records; new reports are rejected at capacity pending administrator archival or 
 
 See the [Docker operations guide](../server/device-report/deploy/README.md) for deployment and migration.
 The production directory is `/srv/agentdock/AgentDock/afa-api`, with a local reverse proxy upstream
-at `http://127.0.0.1:18882`. The container retains the source public key for body signatures and
-deduplication state. Cloudflare client TLS certificates are managed independently at the edge.
+at `http://127.0.0.1:18882`. The container imports the source deduplication state and rotates the
+body-signature public key together with CI credentials. Cloudflare client TLS certificates
+are managed independently at the edge.
 The following systemd instructions are retained for legacy maintenance and rollback.
 
 Build with `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w'` in
