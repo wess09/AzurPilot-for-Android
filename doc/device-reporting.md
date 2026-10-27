@@ -33,8 +33,8 @@ ABI、主屏参数、约整 GiB 内存、App 版本、配置的 Shizuku/Root 后
 
 ### 认证路径
 
-公网地址为 `https://api-apa-v1.nanoda.work/v1/device-reports`。
-Cloudflare 的现有规则在公网 TLS 连接检查客户端证书，无证书请求返回 403。
+公网地址为 `https://afa-api.azurpilot.com/v1/device-reports`。
+Cloudflare 边缘的 mTLS、反代和 DNS 由管理员配置；Docker 服务只提供本机 HTTP API。
 App 按 Android 系统信任链检查服务器，保持正常的主机名验证。
 
 Cloudflare 终止客户端 TLS，因此源站不能从该连接直接取得 App 的客户端证书。
@@ -49,7 +49,7 @@ POST\n/v1/device-reports\n<TIMESTAMP>\n<NONCE>\n<RAW_JSON_BYTES>
 服务器用固定客户端证书公钥校验，允许前后 5 分钟时钟误差，拒绝过期证书与进程内 nonce
 重放。客户端不自动重试 POST，不跟随重定向；离开页面取消会话时关闭 HTTP 请求。
 
-当前 Cloudflare 源站连接使用 HTTP 80，Nginx 转发到本机 `127.0.0.1:18882`，
+旧部署的 Cloudflare 源站连接使用 HTTP 80，Nginx 转发到本机 `127.0.0.1:18882`，
 每份报告仍必须通过正文签名。独立的源站 443 配置供直接 mTLS 检查使用，通过证书指纹
 钉住指定叶证书，并再次执行正文验签。其服务端证书当前为自签证书，不能直接用于
 Cloudflare Full (strict)。切换源站加密时，需要可信服务器证书和适配 Cloudflare 源站
@@ -75,15 +75,15 @@ CI 使用 `verify_device_report_assets.py` 检查所有最终 APK 的压缩目�
 CI 缺少任一 Secret 则构建失败。本地源码编译无需凭据；没有凭据的本地包在提交时显示
 不可用，不应作为带提交功能的发布包。
 
-GitHub API Token 只保存在源站的 `/etc/azurpilot-device-report/service.env`，权限 0600，
+GitHub API Token 只保存在服务器的 `deploy/private/service.env`，权限 0600，
 不会进入 APK。目标仓库是 `wess09/AzurPilot-for-Android`，工单编号固定为 1，
 仅调用 `POST /repos/{owner}/{repo}/issues/1/comments`。结果包含 64 位评论编号及固定工单下的评论链接。
 
 ### 低资源服务与部署
 
 `server/device-report/` 为 Go 标准库实现，静态 Linux 二进制，无独立数据库。
-systemd 以专用用户运行，设置 48 MiB Go 内存目标、96 MiB 硬限制和单核调度。
-状态位于 `/var/lib/azurpilot-device-report/state.json`，仅保存报告哈希、创建时间及评论
+Docker 以非 root 用户运行，设置 48 MiB Go 内存目标、96 MiB 硬限制和单核调度。
+状态挂载到容器的 `/var/lib/azurpilot-device-report/state.json`，仅保存报告哈希、创建时间及评论
 编号/地址，不保存报告正文。
 
 同一报告（忽略 App 版本）的后续提交返回已有评论。创建前先原子持久化待确认状态；
@@ -91,6 +91,11 @@ systemd 以专用用户运行，设置 48 MiB Go 内存目标、96 MiB 硬限制
 查不到时至少等待 2 分钟再尝试创建。跨系统的写操作没有绝对的 exactly-once 保证；
 异常长的 GitHub 可见性延迟仍可能产生重复。状态上限为 10,000 条，到达上限会明确拒绝
 新报告，需要管理员归档或扩容。
+
+Docker 部署与迁移步骤见 [Docker 运维说明](../server/device-report/deploy/README.md)。
+生产目录为 `/srv/agentdock/AgentDock/afa-api`；反代上游使用 `http://127.0.0.1:18882`。
+容器沿用源站的正文签名公钥和去重记录；Cloudflare 的客户端 TLS 证书独立在边缘管理。
+源站原有 systemd 安装方式保留如下，供旧部署维护和回滚使用。
 
 交叉编译并上传二进制及公开客户端证书，不上传客户端私钥：
 
@@ -169,9 +174,10 @@ written to reports, state files or access logs.
 
 ### Authentication
 
-The public endpoint is `https://api-apa-v1.nanoda.work/v1/device-reports`.
-Existing Cloudflare rules verify the client certificate at the public TLS edge; requests without
-one return 403. Android retains system server trust and normal hostname verification.
+The public endpoint is `https://afa-api.azurpilot.com/v1/device-reports`.
+The administrator configures Cloudflare edge mTLS, DNS, and the reverse proxy;
+the Docker service exposes a loopback HTTP API. Android retains system server trust
+and normal hostname verification.
 
 Cloudflare terminates client TLS, so the origin cannot obtain the app certificate from that
 connection. The app signs UTF-8 `POST\n/v1/device-reports\n<TIMESTAMP>\n<NONCE>\n<RAW_JSON_BYTES>`
@@ -181,7 +187,7 @@ lowercase hex nonce and standard Base64 signature are sent in `X-Report-Timestam
 clock window, certificate validity and process-local nonce replay protection. POST is not
 automatically retried or redirected. Cancelling the page session closes the request.
 
-The current Cloudflare origin path uses HTTP port 80, forwarded by Nginx to loopback port 18882.
+The legacy Cloudflare origin path uses HTTP port 80, forwarded by Nginx to loopback port 18882.
 Every report still requires a valid body signature. The separate origin port 443 configuration
 supports direct mTLS tests with the pinned client leaf and body signatures. Its current server
 certificate is self-signed and cannot serve Cloudflare Full (strict). Encrypting that origin hop
@@ -206,14 +212,14 @@ exact credential equality with CI inputs. Local verification requires credential
 
 CI fails if either Secret is absent. Local compilation needs no credentials; credential-free local
 APKs report that submission is unavailable and should not be distributed as reporting-enabled builds.
-The GitHub token is server-only in `/etc/azurpilot-device-report/service.env` with mode 0600.
+The GitHub token is server-only in `deploy/private/service.env` with mode 0600.
 It never enters the APK. Reports use only `POST /repos/wess09/AzurPilot-for-Android/issues/1/comments`.
 Results include a 64-bit comment ID and a validated URL within that fixed issue.
 
 ### Service and deployment
 
-The Go standard-library service builds a static Linux binary without a database process. systemd
-runs a dedicated user with a 48 MiB Go memory target, 96 MiB hard limit and one scheduler core.
+The Go standard-library service builds a static Linux binary without a database process. Docker
+runs a non-root user with a 48 MiB Go memory target, 96 MiB hard limit and one scheduler core.
 `/var/lib/azurpilot-device-report/state.json` stores report hashes, timestamps and comment references,
 never report bodies.
 
@@ -222,6 +228,12 @@ creation; retries reconcile uncertain results using markers within issue #1 comm
 minutes before another creation. Cross-system writes cannot guarantee absolute exactly-once
 delivery; extreme GitHub visibility delays can still duplicate a comment. State is capped at 10,000
 records; new reports are rejected at capacity pending administrator archival or expansion.
+
+See the [Docker operations guide](../server/device-report/deploy/README.md) for deployment and migration.
+The production directory is `/srv/agentdock/AgentDock/afa-api`, with a local reverse proxy upstream
+at `http://127.0.0.1:18882`. The container retains the source public key for body signatures and
+deduplication state. Cloudflare client TLS certificates are managed independently at the edge.
+The following systemd instructions are retained for legacy maintenance and rollback.
 
 Build with `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w'` in
 `server/device-report/`. Upload the binary, public client certificate and `deploy/`, keeping the

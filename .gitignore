@@ -8,6 +8,7 @@ dist/
 node_modules/
 azurpilot.log
 *.log
+/server/afa-api-state/
 
 # v3 阶段：本地归档（上游 fork 与桌面副本，留本地不进公开仓）
 m0-archive/

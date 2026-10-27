@@ -134,7 +134,7 @@ class DeviceReportClient(private val context: Context) {
             Base64.encodeToString(sign(), Base64.NO_WRAP)
         }
         val request = Request.Builder()
-            .url("https://api-apa-v1.nanoda.work/v1/device-reports")
+            .url("https://afa-api.azurpilot.com/v1/device-reports")
             .header("User-Agent", "AzurPilotAndroid/" + report.appVersion)
             .header("X-Report-Timestamp", timestamp)
             .header("X-Report-Nonce", nonce)

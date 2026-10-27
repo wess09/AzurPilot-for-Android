@@ -1,0 +1,45 @@
+name: afa-api
+
+services:
+  api:
+    image: ${AFA_API_IMAGE:-afa-api:local}
+    build:
+      context: ..
+    network_mode: host
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - path: ./private/service.env
+        format: raw
+    environment:
+      LISTEN_ADDR: "127.0.0.1:18882"
+      CLIENT_CERT_FILE: /run/secrets/client-cert.pem
+      STATE_FILE: /var/lib/azurpilot-device-report/state.json
+      GOMEMLIMIT: 48MiB
+      GOMAXPROCS: "1"
+    volumes:
+      - type: bind
+        source: ./private/client-cert.pem
+        target: /run/secrets/client-cert.pem
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${AFA_API_STATE_DIR:-../../afa-api-state}
+        target: /var/lib/azurpilot-device-report
+        bind:
+          create_host_path: false
+    mem_limit: 96m
+    cpus: 1.0
+    pids_limit: 16
+    stop_grace_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
