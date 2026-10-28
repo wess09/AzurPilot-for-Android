@@ -1,0 +1,38 @@
+name: Android auto-search two-frame
+
+on:
+  pull_request:
+    paths:
+      - 'rootfs/overlays/android_auto_search.py'
+      - 'rootfs/overlays/sitecustomize.py'
+      - 'rootfs/tests/test_android_auto_search.py'
+      - 'app/app/build.gradle.kts'
+      - 'app/app/src/main/kotlin/com/azurpilot/ghio/proot/ProotHost.kt'
+      - '.github/workflows/auto-search-tests.yml'
+  push:
+    branches: [main, fix/android-auto-search-two-frame]
+    paths:
+      - 'rootfs/overlays/android_auto_search.py'
+      - 'rootfs/overlays/sitecustomize.py'
+      - 'rootfs/tests/test_android_auto_search.py'
+      - 'app/app/build.gradle.kts'
+      - 'app/app/src/main/kotlin/com/azurpilot/ghio/proot/ProotHost.kt'
+      - '.github/workflows/auto-search-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Test auto-search overlay
+        run: python3 rootfs/tests/test_android_auto_search.py -v
+      - name: Check Python syntax
+        run: |
+          python3 -m py_compile rootfs/overlays/android_auto_search.py rootfs/overlays/sitecustomize.py
+          git diff --check HEAD~1 HEAD

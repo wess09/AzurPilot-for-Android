@@ -134,6 +134,7 @@ install -m 0644 "$REPO_ROOT/rootfs/overlays/sitecustomize.py" "$VENV_SITE_PACKAG
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_ocr.py" "$VENV_SITE_PACKAGES/android_ocr.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_equipment.py" "$VENV_SITE_PACKAGES/android_equipment.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_capture.py" "$VENV_SITE_PACKAGES/android_capture.py"
+install -m 0644 "$REPO_ROOT/rootfs/overlays/android_auto_search.py" "$VENV_SITE_PACKAGES/android_auto_search.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_ntp.py" "$VENV_SITE_PACKAGES/android_ntp.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_app_launch.py" "$VENV_SITE_PACKAGES/android_app_launch.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_device.py" "$VENV_SITE_PACKAGES/android_device.py"
