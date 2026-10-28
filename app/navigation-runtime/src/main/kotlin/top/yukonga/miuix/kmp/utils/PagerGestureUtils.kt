@@ -147,11 +147,12 @@ fun Modifier.horizontalPagerSwipeOverride(
 private data class PagerSwipeElement(
     val pagerState: PagerState,
     val onIntercepted: (() -> Unit)?,
+    val isTouchExcluded: ((Offset) -> Boolean)? = null,
 ) : ModifierNodeElement<PagerSwipeNode>() {
-    override fun create(): PagerSwipeNode = PagerSwipeNode(pagerState, onIntercepted)
+    override fun create(): PagerSwipeNode = PagerSwipeNode(pagerState, onIntercepted, isTouchExcluded)
 
     override fun update(node: PagerSwipeNode) {
-        node.update(pagerState, onIntercepted)
+        node.update(pagerState, onIntercepted, isTouchExcluded)
     }
 
     override fun InspectorInfo.inspectableProperties() {
@@ -168,6 +169,7 @@ private sealed interface PagerDragEvent {
 private class PagerSwipeNode(
     var pagerState: PagerState,
     var onIntercepted: (() -> Unit)?,
+    var isTouchExcluded: ((Offset) -> Boolean)?,
 ) : DelegatingNode(),
     CompositionLocalConsumerModifierNode,
     SemanticsModifierNode,
@@ -180,6 +182,10 @@ private class PagerSwipeNode(
             val velocityTracker = VelocityTracker()
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                if (isTouchExcluded?.invoke(down.position) == true) {
+                    cancelMotion()
+                    return@awaitEachGesture
+                }
                 val state = pagerState
                 val scrollSign = scrollSign()
                 finishNonTouchInput()
@@ -334,6 +340,15 @@ private class PagerSwipeNode(
         nonTouchEvents = null
     }
 
+    private fun cancelMotion() {
+        wheelEndJob?.cancel()
+        wheelEndJob = null
+        nonTouchEvents?.cancel()
+        nonTouchEvents = null
+        motionJob?.cancel()
+        motionJob = null
+    }
+
     override fun onDetach() {
         finishNonTouchInput()
         motionJob?.cancel()
@@ -354,7 +369,12 @@ private class PagerSwipeNode(
         return true
     }
 
-    fun update(state: PagerState, onIntercepted: (() -> Unit)?) {
+    fun update(
+        state: PagerState,
+        onIntercepted: (() -> Unit)?,
+        isTouchExcluded: ((Offset) -> Boolean)?,
+    ) {
+        this.isTouchExcluded = isTouchExcluded
         this.onIntercepted = onIntercepted
         if (pagerState != state) {
             finishNonTouchInput()
@@ -412,14 +432,27 @@ fun Modifier.iosStyleMomentumHalt(
     flingTracker: PagerFlingTrackerConnection,
     enabled: Boolean = true,
     onHalted: (() -> Unit)? = null,
+): Modifier = momentumHaltExcluding(flingTracker, enabled, onHalted, null)
+
+/**
+ * 在初始触摸阶段跳过游戏画面，其余惯性处理保持原流程。
+ *
+ * Skips game-frame touches at the initial pass while retaining existing momentum handling.
+ */
+private fun Modifier.momentumHaltExcluding(
+    flingTracker: PagerFlingTrackerConnection,
+    enabled: Boolean,
+    onHalted: (() -> Unit)?,
+    isTouchExcluded: ((Offset) -> Boolean)?,
 ): Modifier = if (!enabled) {
     this
 } else {
-    this.nestedScroll(flingTracker).pointerInput(flingTracker, enabled, onHalted) {
+    this.nestedScroll(flingTracker).pointerInput(flingTracker, enabled, onHalted, isTouchExcluded) {
         val touchSlop = viewConfiguration.touchSlop
 
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            if (isTouchExcluded?.invoke(down.position) == true) return@awaitEachGesture
             val downPos = down.position
             val hadMomentum = flingTracker.isChildFlinging
             if (!hadMomentum) {
@@ -538,3 +571,24 @@ fun Modifier.pagerGestureOverride(
     enabled = enabled,
     onTriggered = onTriggered,
 )
+
+/**
+ * 仅按触摸起点排除指定区域，保留旧分页 API 及滚轮、触控板行为。
+ *
+ * Excludes touch sequences by their origin, preserving the old APIs and wheel/trackpad behavior.
+ */
+@Composable
+fun Modifier.pagerGestureOverrideExcluding(
+    pagerState: PagerState,
+    mode: PagerInterceptionMode,
+    isTouchExcluded: (Offset) -> Boolean,
+): Modifier {
+    val flingTracker = remember { PagerFlingTrackerConnection() }
+    return when (mode) {
+        PagerInterceptionMode.CrossAxisInterceptor ->
+            then(PagerSwipeElement(pagerState, null, isTouchExcluded))
+        PagerInterceptionMode.TapToHalt ->
+            momentumHaltExcluding(flingTracker, true, null, isTouchExcluded)
+        PagerInterceptionMode.Native -> this
+    }
+}

@@ -45,6 +45,7 @@ import com.azurpilot.ghio.constant.DefaultDisplayConfig
 import com.azurpilot.ghio.proot.AzurPilotRunController
 import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.theme.AppTokens
+import com.azurpilot.ghio.ui.mainPagerGestureExclusion
 import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 import com.azurpilot.ghio.ui.components.ToolSlotColumn
 import com.azurpilot.ghio.ui.ksu.AppIcon as Icon
@@ -199,7 +200,7 @@ fun ScreenPage(
                     contentAlignment = Alignment.Center,
                 ) {
                     AndroidView(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().mainPagerGestureExclusion(),
                         factory = { context ->
                             android.view.TextureView(context).apply {
                                 // TextureView 属于应用图层，分页位移与裁剪能同步作用到预览。

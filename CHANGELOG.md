@@ -20,6 +20,9 @@ see each Release (`AzurPilot-Android-<version>`) for version numbers.
 
 ### 修复 / Fixed
 
+- 虚拟屏游戏画面内的横划不再切换配置页；周围留白和控制区仍可正常翻页。
+- Horizontal drags inside the virtual-display game frame no longer switch tabs; margins and controls retain normal page gestures.
+
 - 逐页整理设置界面：信息行标签不再被挤成多行，后台保活的机制名不再夹杂英文类名并改称「七路保活机制」（与列表一致），移除「应用锁屏保护」「开源组件」两处重复标题。
 - 修复 proot 环境缺少宿主 uid 的 `/etc/passwd` 条目导致 ssh 无法启动的问题（远程访问在 Android 上运行的前提）。
 - `android_host.py` 边界 overlay 改为随 APK 分发并在每次拉起会话前同步进 rootfs：只走热更的用户也能拿到 overlay 更新。
