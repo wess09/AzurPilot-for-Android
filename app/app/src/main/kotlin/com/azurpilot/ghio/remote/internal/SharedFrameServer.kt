@@ -3,6 +3,7 @@ package com.azurpilot.ghio.remote.internal
 import android.net.LocalSocket
 import android.os.ParcelFileDescriptor
 import android.os.SharedMemory
+import android.os.SystemClock
 import android.system.OsConstants
 import com.azurpilot.ghio.bridge.NativeBridgeLib
 import com.azurpilot.ghio.third.Ln
@@ -19,13 +20,16 @@ import kotlin.concurrent.thread
  *
  * App 接受连接后通过 Binder 传入已连接 FD，避免 SELinux 拒绝跨域 connect/listen/accept。
  * 客户端线程为守护线程。客户端先 open 取得只读 FD，再逐次 screencap；
+ * 首帧未就绪时 screencap 最多阻塞 ~3s 等待，超时才报 no frame available。
  * 帧在下一次请求前保持不变，客户端必须先复制成自有 RGB 图像才可再次请求。
  * native 帧槽只在 memcpy 期间持有，不取得输入锁。停止时关闭活动连接并释放映射。
  *
  * Provides connection-owned shared-memory capture in the privileged process, sending only
  * metadata over a Unix socket per frame. The app accepts and passes a connected FD through Binder
  * to avoid SELinux cross-domain connect/listen/accept restrictions. Client threads are daemons.
- * Clients open a read-only FD before sequential screencap calls. Pixels remain unchanged until
+ * Clients open a read-only FD before sequential screencap calls. When the first frame is not
+ * ready, a screencap blocks at most ~3 s waiting before reporting no frame available. Pixels
+ * remain unchanged until
  * the next request, so clients copy into an owned RGB image before requesting again. Native
  * slots are held only for memcpy, without the input lock. Stopping closes clients and mappings.
  */
@@ -37,6 +41,23 @@ object SharedFrameServer {
     private const val MAX_BYTES = 32 * 1024 * 1024
     private const val MAX_LINE = 4096
     private const val IDLE_TIMEOUT_MS = 60_000
+
+    /**
+     * screencap 首帧重试预算：VD (重)建后游戏首帧尚未渲染（native 帧计数归零），客户端单次
+     * 失败即 ScriptError 死调度器，故与 TCP 通道（BridgeServer 的 down/screencap 重试）同款
+     * 权衡，有界预算把瞬态竞态对客户端隐身；真空 VD 仍报错，只是晚 ~3s。本通道无锁，等待只
+     * 占当前连接线程，不阻塞帧生产线程与其它连接；预算须低于客户端 5s socket 超时。
+     *
+     * Screencap first-frame retry budget: after a VD (re)build the game's first frame has not
+     * been rendered yet (the native frame counter is zeroed), and a single failure kills
+     * AzurPilot's scheduler with a ScriptError. Mirroring the TCP channel's retry trade-off
+     * (BridgeServer's down/screencap retries), a bounded budget hides the transient race; a
+     * truly empty VD still errors, just ~3 s later. This channel takes no lock: waiting
+     * occupies only the requesting connection's thread and blocks neither the frame producer
+     * nor other connections; the budget must stay below the client's 5 s socket timeout.
+     */
+    private const val SCREENCAP_RETRY_BUDGET_MS = 3000L
+    private const val SCREENCAP_RETRY_INTERVAL_MS = 200L
     private val clients = mutableSetOf<LocalSocket>()
 
     private var accepting = false
@@ -155,7 +176,7 @@ object SharedFrameServer {
                                 response.put("ok", false).put("error", "reopen required")
                                     .put("reopen", true)
                             } else {
-                                val frame = NativeBridgeLib.copyFrameBuffer(buffer)
+                                val frame = copyFrameWithRetry(buffer)
                                 if (frame == null) {
                                     response.put("ok", false).put("error", "no frame available")
                                 } else {
@@ -182,6 +203,36 @@ object SharedFrameServer {
             mapping?.let { SharedMemory.unmap(it) }
             memory?.close()
             synchronized(this) { clients.remove(socket) }
+        }
+    }
+
+    /**
+     * 有界重试的共享内存取帧：见 [SCREENCAP_RETRY_BUDGET_MS] 注释。先轮询帧计数判就绪再
+     * memcpy，预算耗尽返回 null，由调用方回 "no frame available"。
+     *
+     * Shared-memory frame copy with a bounded retry: see the [SCREENCAP_RETRY_BUDGET_MS] note.
+     * Polls the frame counter for readiness before the memcpy; returns null on budget
+     * exhaustion, which the caller reports as "no frame available".
+     */
+    private fun copyFrameWithRetry(buffer: ByteBuffer): LongArray? {
+        val deadline = SystemClock.uptimeMillis() + SCREENCAP_RETRY_BUDGET_MS
+        var attempts = 0
+        while (true) {
+            attempts++
+            // 先看帧计数再 memcpy：首帧未发布时 native 必返 null，省掉空转的整帧拷贝
+            if (NativeBridgeLib.getFrameCount() > 0) {
+                val frame = NativeBridgeLib.copyFrameBuffer(buffer)
+                if (frame != null) {
+                    if (attempts > 1) Ln.w("SharedFrameServer: screencap ok after $attempts attempts (first-frame race absorbed)")
+                    return frame
+                }
+            }
+            val remaining = deadline - SystemClock.uptimeMillis()
+            if (remaining <= 0) {
+                if (attempts > 1) Ln.w("SharedFrameServer: no frame after $attempts attempts / ${SCREENCAP_RETRY_BUDGET_MS}ms")
+                return null
+            }
+            Thread.sleep(minOf(SCREENCAP_RETRY_INTERVAL_MS, remaining))
         }
     }
 }

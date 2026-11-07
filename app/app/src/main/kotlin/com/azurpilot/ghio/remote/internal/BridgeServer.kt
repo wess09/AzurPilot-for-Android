@@ -37,6 +37,7 @@ import kotlin.math.roundToInt
  *
  * 一个线程接受连接，每个客户端使用一个守护线程。屏幕读取、触摸和装备码操作由
  * [DEVICE_LOCK] 串行，装备码输入仅接受有界 Base64 文本并始终绑定当前虚拟屏。
+ * `screencap` 在首帧未就绪时持锁等待最多 ~3s 才报错（与 click 的窗口注册重试同款）。
  * 启动聚焦同样持锁，校验目标包后向当前副屏发送按下与取消序列。
  * `shell` 不持有该锁。 [start] 在 [RemoteServiceImpl] 初始化期间调用；绑定失败只记录日志。
  * [SharedFrameServer] 提供独立共享内存截图通道，ping 返回其能力及 Unix socket 名称；
@@ -54,7 +55,9 @@ import kotlin.math.roundToInt
  *
  * One thread accepts connections and each client has a daemon thread. [DEVICE_LOCK] serializes
  * screen reads, touch injection, and equipment-code operations. Equipment input accepts only
- * bounded Base64 text on the current virtual display. Launch focus takes the same lock, verifies
+ * bounded Base64 text on the current virtual display. A screencap waits at most ~3 s under the
+ * lock for the first frame before erroring (same as the click window-registration retry).
+ * Launch focus takes the same lock, verifies
  * the target package, and sends down/cancel on the current secondary display.
  * `shell` does not take the lock. [start] is
  * called while [RemoteServiceImpl] initializes, and a bind failure is logged only.
@@ -92,6 +95,26 @@ object BridgeServer {
      */
     private const val DOWN_RETRY_BUDGET_MS = 3000L
     private const val DOWN_RETRY_INTERVAL_MS = 200L
+
+    /**
+     * screencap 首帧重试预算：VD (重)建后游戏首帧尚未渲染（native 帧计数归零、诊断串停在
+     * "waiting for image callback"），VD 重启半途的旧尺寸残帧同属瞬态；与 down 重试同款权衡
+     * ——客户端单次失败即 ScriptError 死调度器，有界预算把竞态对客户端隐身，真空 VD 仍报
+     * 同样错误，只是晚 ~3s。等待持锁与 click 重试同款，且 sleep 不阻塞 native 帧生产线程；
+     * 预算须低于客户端 5s socket 超时，SharedFrameServer 通道与之对齐。
+     *
+     * Retry budget for the screencap first frame: after a VD (re)build the game's first frame
+     * has not been rendered yet (the native frame counter is zeroed, diagnostics stay at
+     * "waiting for image callback"), and a stale wrong-size frame mid-restart is the same kind
+     * of transient. Same trade-off as the touch-down retry — a single failure kills AzurPilot's
+     * scheduler with a ScriptError, so a bounded budget hides the race from the client, while a
+     * truly empty VD still returns the same error, just ~3 s later. Holding the lock while
+     * waiting is the same story as the click retry, and the sleep never blocks the native
+     * frame-producer thread; the budget must stay below the client's 5 s socket timeout, and the
+     * SharedFrameServer channel aligns with it.
+     */
+    private const val SCREENCAP_RETRY_BUDGET_MS = 3000L
+    private const val SCREENCAP_RETRY_INTERVAL_MS = 200L
     private const val DEFAULT_SWIPE_MS = 500L
     private const val JOIN_AFTER_KILL_MS = 1000L
 
@@ -271,23 +294,61 @@ object BridgeServer {
         }
     }
 
-    /** screencap 端点：响应行后紧跟裸字节帧 / The screencap endpoint: a bare byte frame follows the response line */
+    /**
+     * screencap 端点：响应行后紧跟裸字节帧；首帧未就绪时在 [SCREENCAP_RETRY_BUDGET_MS] 内
+     * 等待重试，预算耗尽才回错误帧。
+     *
+     * The screencap endpoint: a bare byte frame follows the response line; when the first frame
+     * is not ready it waits and retries within [SCREENCAP_RETRY_BUDGET_MS], erroring only after
+     * the budget is exhausted.
+     */
     private fun handleScreencap(conn: Conn, reply: (JSONObject) -> Unit) {
         DEVICE_LOCK.withLock {
             if (!NativeBridgeLib.LOADED) {
                 reply(err("native bridge not loaded"))
                 return@withLock
             }
-            val bytes = NativeBridgeLib.getFrameBufferBytes()
-            if (bytes == null) {
-                reply(err("no frame available: display=${VirtualDisplayManager.getDisplayId()} " +
-                    NativeBridgeLib.getCaptureDiagnostics()))
-                return@withLock
+            val deadline = SystemClock.uptimeMillis() + SCREENCAP_RETRY_BUDGET_MS
+            var attempts = 0
+            var bytes: ByteArray? = null
+            // 失败画像取自最后一次尝试：区分"无帧"与"旧尺寸残帧"两类既有文案，便于排障
+            var mismatch: String? = null
+            var cfg = VirtualDisplayManager.getConfig()
+            while (true) {
+                attempts++
+                mismatch = null
+                // 先轮询帧计数判就绪再取帧：首帧未发布时 native 必返 null，省掉空转的大块 memcpy
+                if (NativeBridgeLib.getFrameCount() > 0) {
+                    val candidate = NativeBridgeLib.getFrameBufferBytes()
+                    if (candidate != null) {
+                        cfg = VirtualDisplayManager.getConfig()
+                        if (candidate.size != cfg.width * cfg.height * 3) {
+                            // VD 重启半途：native 帧缓冲还是旧尺寸，直接发给客户端会 reshape 炸掉
+                            mismatch = "frame size mismatch: got ${candidate.size}, " +
+                                "expected ${cfg.width}x${cfg.height}x3"
+                        } else {
+                            bytes = candidate
+                        }
+                    }
+                }
+                if (bytes != null) {
+                    if (attempts > 1) Ln.w("$TAG: screencap ok after $attempts attempts (first-frame race absorbed)")
+                    break
+                }
+                val remaining = deadline - SystemClock.uptimeMillis()
+                if (remaining <= 0) {
+                    if (attempts > 1) {
+                        Ln.w("$TAG: screencap failed after $attempts attempts / ${SCREENCAP_RETRY_BUDGET_MS}ms " +
+                            "on display ${VirtualDisplayManager.getDisplayId()}")
+                    }
+                    break
+                }
+                Thread.sleep(minOf(SCREENCAP_RETRY_INTERVAL_MS, remaining))
             }
-            val cfg = VirtualDisplayManager.getConfig()
-            if (bytes.size != cfg.width * cfg.height * 3) {
-                // VD 重启半途：native 帧缓冲还是旧尺寸，直接发给客户端会 reshape 炸掉
-                reply(err("frame size mismatch: got ${bytes.size}, expected ${cfg.width}x${cfg.height}x3"))
+            if (bytes == null) {
+                // 预算耗尽仍失败：保持既有错误文案与 diagnostics 内容，客户端依赖其排障
+                reply(err(mismatch ?: ("no frame available: display=${VirtualDisplayManager.getDisplayId()} " +
+                    NativeBridgeLib.getCaptureDiagnostics())))
                 return@withLock
             }
             reply(

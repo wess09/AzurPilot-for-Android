@@ -24,7 +24,7 @@
 | 方法 | 必填字段 | 成功响应 | 约束 |
 |---|---|---|---|
 | `ping` | 无 | `ok`、`pong`、`displayId`、`capture`、`uptime`、`capabilities` | `capabilities.equipmentCode=true` 表示支持下述装备码接口。诊断不表示目标应用已经可交互；旧桥无能力字段时客户端须停止装备码操作。 |
-| `screencap` | 无 | `ok`、`width`、`height`、`channels=3`、`length`、`frames`，后接 BGR888 字节 | 捕获不可用或尺寸不匹配时返回错误 JSON，不发送原始字节。`frames` 是本轮帧缓冲生命周期内已发布帧的递增序号：相邻两次 screencap 的值不变即画面冻结（如目标进程被 ROM 冻结）。客户端可忽略该字段。 |
+| `screencap` | 无 | `ok`、`width`、`height`、`channels=3`、`length`、`frames`，后接 BGR888 字节 | 虚拟屏 (重)建后首帧尚未渲染时，请求最多阻塞约 3 秒等待首帧；捕获不可用或尺寸不匹配时返回错误 JSON，不发送原始字节。`frames` 是本轮帧缓冲生命周期内已发布帧的递增序号：相邻两次 screencap 的值不变即画面冻结（如目标进程被 ROM 冻结）。客户端可忽略该字段。 |
 | `click` | `x`、`y` | `ok=true` | 使用当前虚拟显示；无活动显示或触摸注入失败时返回错误。 |
 | `swipe` | `x1`、`y1`、`x2`、`y2` | `ok=true` | 可选 `duration` 为毫秒，负值按 0 处理。 |
 | `equipment_code_read` | 无 | `ok=true`、`code` | 从系统剪贴板的首项读取装备码；无有效码返回 `code=null`，不展开 URI，不返回其他内容。无活动虚拟屏或系统拒绝访问时返回错误。 |
@@ -48,6 +48,8 @@ socket 超时由 App 在交付前设置为 60 秒。旧 TCP `screencap` 保持�
 之后发送 `{"method":"screencap"}`，响应包含 `width`、`height`、`channels=3`、
 `length`、`frames` 和 `transport="shared_memory"`；没有随附像素字节。
 元数据和像素来自同一 native 帧槽，响应前完成 memcpy。
+虚拟屏 (重)建后首帧尚未渲染时，该请求最多阻塞约 3 秒等待首帧，超时返回
+`ok=false` 的 `no frame available`；等待只占用当前连接，不影响其它连接。
 
 每个连接拥有独立映射，下一次请求才会覆盖该连接的帧。客户端必须先复制成自有 RGB
 数组，才能发送下一条截图请求；保留映射视图或管线化请求会破坏这个保证。
@@ -99,7 +101,7 @@ The current service implementation and this document define compatibility. No hi
 | Method | Required fields | Success response | Constraints |
 |---|---|---|---|
 | `ping` | None | `ok`, `pong`, `displayId`, `capture`, `uptime`, `capabilities` | `capabilities.equipmentCode=true` advertises the equipment endpoints below. Diagnostics do not prove that the target app is interactive; clients must stop equipment operations when an older bridge omits the capability. |
-| `screencap` | None | `ok`, `width`, `height`, `channels=3`, `length`, `frames`, followed by BGR888 bytes | An unavailable capture or size mismatch returns error JSON and no raw bytes. `frames` is the increasing sequence of frames published within the current frame-buffer lifetime: identical values across consecutive screencaps mean a frozen picture (for example, the target process frozen by the ROM). Clients may ignore the field. |
+| `screencap` | None | `ok`, `width`, `height`, `channels=3`, `length`, `frames`, followed by BGR888 bytes | After a virtual-display (re)build with no rendered frame yet, the request blocks for at most ~3 seconds waiting for the first frame. An unavailable capture or size mismatch returns error JSON and no raw bytes. `frames` is the increasing sequence of frames published within the current frame-buffer lifetime: identical values across consecutive screencaps mean a frozen picture (for example, the target process frozen by the ROM). Clients may ignore the field. |
 | `click` | `x`, `y` | `ok=true` | Uses the current virtual display; no active display or failed injection is an error. |
 | `swipe` | `x1`, `y1`, `x2`, `y2` | `ok=true` | Optional `duration` is milliseconds; negative values become 0. |
 | `equipment_code_read` | None | `ok=true`, `code` | Reads an equipment code from the first system clipboard item; an invalid or absent code returns `code=null`. Does not resolve URIs or return other content. An absent virtual display or denied system access returns an error. |
@@ -124,6 +126,9 @@ and `capacity`, with one anonymous-memory FD delivered through `SCM_RIGHTS` and 
 read-only mmap. Subsequent `{"method":"screencap"}` responses include `width`, `height`,
 `channels=3`, `length`, `frames`, and `transport="shared_memory"`, without trailing pixel bytes.
 Metadata and pixels come from the same native slot; memcpy finishes before the response.
+After a virtual-display (re)build with no rendered frame yet, a screencap blocks for at most
+~3 seconds waiting for the first frame, then returns `ok=false` with `no frame available`; the
+wait occupies only the requesting connection and does not affect other connections.
 
 Each connection owns its mapping, which is overwritten only on its next request. Clients must
 copy into an owned RGB array before requesting again; retaining mapping views or pipelining
