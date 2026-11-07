@@ -72,8 +72,15 @@ import org.koin.compose.koinInject
 /**
  * 保存扫码、六码绑定和设备切换状态；相机返回后继续同一流程，不依赖本机 Runtime。
  *
+ * 远程客户端模式开关只在网关目标切换成功后落盘：AppRoot 的 localRuntimeEnabled 以它为
+ * 本机部署/启动的门闩，提前或失败后残留 true 都会把本机 Runtime 永久关在门外。
+ *
  * Retains scanning, six-digit pairing and device switching across camera results, independently
  * of the local Runtime.
+ *
+ * The remote-client mode flag lands only after the gateway target switch succeeds: AppRoot's
+ * localRuntimeEnabled uses it as the latch for local deployment/startup, so writing it early or
+ * leaving it set after a failure would lock the local Runtime out for good.
  */
 @Composable
 fun RemotePairingCard(
@@ -97,7 +104,17 @@ fun RemotePairingCard(
     fun connectionFinished(ok: Boolean) {
         busy = false
         error = if (ok) null else R.string.remote_pair_failed
-        if (ok) onConnected()
+        if (ok) {
+            // 目标切换成功才落盘远程客户端模式。提前落盘会把失败/中断的配对也固化成
+            // remoteClientMode=true，而 AppRoot 的 localRuntimeEnabled 会因此永远不再
+            // 部署/启动本机 Runtime——重启 App 也恢复不了，正是「改设置后无法连接」的来源。
+            // Only land remote-client mode after the target switch succeeded. Writing it early
+            // cements failed or abandoned pairings as remoteClientMode=true, which then keeps
+            // localRuntimeEnabled from ever deploying/starting the local Runtime again — even
+            // across app restarts; that is the "changed a setting, cannot connect" regression.
+            scope.launch { settings.setRemoteClientMode(true) }
+            onConnected()
+        }
     }
     fun pair(value: String) {
         if (busy) return
@@ -106,7 +123,6 @@ fun RemotePairingCard(
         scope.launch {
             runCatching {
                 val paired = store.pair(value)
-                settings.setRemoteClientMode(true)
                 devices = store.list()
                 code = ""
                 paired
@@ -137,9 +153,14 @@ fun RemotePairingCard(
         onSubmit = { pair(code) },
         onLocal = {
             busy = true
+            // 切回本机先撤模式开关：connectTarget 失败（如编辑队列等待超时）也不能把用户
+            // 困在远程模式——那会让本机 Runtime 永远起不来。网关目标由 connectTarget 自己收尾。
+            // Clear the mode switch before retargeting: a connectTarget failure (say an editor
+            // settle timeout) must not trap the user in remote mode, which would keep the local
+            // Runtime from ever starting. The gateway target itself is settled by connectTarget.
+            scope.launch { settings.setRemoteClientMode(false) }
             repository.connectTarget(null) { ok ->
-                if (ok) scope.launch {
-                    settings.setRemoteClientMode(false)
+                if (ok) {
                     busy = false
                     onLocalSelected()
                 } else {
@@ -151,10 +172,7 @@ fun RemotePairingCard(
         onConnect = { device ->
             busy = true
             error = null
-            scope.launch {
-                settings.setRemoteClientMode(true)
-                repository.connectTarget(device, ::connectionFinished)
-            }
+            scope.launch { repository.connectTarget(device, ::connectionFinished) }
         },
         onRemove = { device ->
             scope.launch {

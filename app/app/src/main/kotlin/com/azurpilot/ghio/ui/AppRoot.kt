@@ -56,6 +56,7 @@ import com.azurpilot.ghio.proot.ProotPhase
 import com.azurpilot.ghio.provision.ProvisionState
 import com.azurpilot.ghio.provision.RootfsProvisioner
 import com.azurpilot.ghio.remoteaccess.RemoteConnectionPage
+import com.azurpilot.ghio.remoteaccess.RemotePairings
 import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.settings.CURRENT_LEGAL_NOTICE_VERSION
@@ -218,6 +219,24 @@ fun AppRoot(
     val context = LocalContext.current
     val activity = context as? FragmentActivity
     val scope = rememberCoroutineScope()
+
+    // 远程客户端模式的陈旧自愈：旧版本在「打开远程页」甚至「配对尚未成功」时就把该开关
+    // 写成 true，而 localRuntimeEnabled 会因此永远不再部署/启动本机 Runtime——重启 App 也
+    // 恢复不了，正是「更改远程设置后本机再也连不上」的回归。这里只在网关未指向远程且
+    // 没有任何已保存配对时清除标志；真正绑定过的用户不受影响，仍走卡片的「连接本机」。
+    // Stale-flag self-heal for remote-client mode: older builds wrote the flag when merely
+    // opening the remote page or before a pairing succeeded, and localRuntimeEnabled then kept
+    // the local Runtime from ever being deployed/started again — unrecoverable by restarting
+    // the app, which is the "changed a remote setting, cannot connect" regression. The flag is
+    // cleared only when the gateway targets nothing remote and no pairing is saved; users with
+    // real pairings are untouched and keep the card's "connect local" exit.
+    LaunchedEffect(settingsLoaded, remoteClientMode, remoteName) {
+        if (!settingsLoaded || !remoteClientMode || remoteName != null) return@LaunchedEffect
+        val hasPairing = runCatching {
+            RemotePairings(context.applicationContext).list()
+        }.getOrNull().orEmpty().isNotEmpty()
+        if (!hasPairing) appSettings.setRemoteClientMode(false)
+    }
 
     // 应用进入后台/熄屏时锁定应用
     val lifecycleOwner = LocalLifecycleOwner.current
