@@ -137,6 +137,7 @@ install -m 0644 "$REPO_ROOT/rootfs/overlays/android_capture.py" "$VENV_SITE_PACK
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_ntp.py" "$VENV_SITE_PACKAGES/android_ntp.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_app_launch.py" "$VENV_SITE_PACKAGES/android_app_launch.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_device.py" "$VENV_SITE_PACKAGES/android_device.py"
+install -m 0644 "$REPO_ROOT/rootfs/overlays/android_config_compat.py" "$VENV_SITE_PACKAGES/android_config_compat.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_update.py" "$VENV_SITE_PACKAGES/android_update.py"
 install -m 0644 "$REPO_ROOT/rootfs/overlays/android_update.py" "$ROOTFS_DIR/opt/azurpilot/android_update.py"
 guest /bin/sh -c 'cd /opt/azurpilot && .venv/bin/python -m module.config.config_updater'

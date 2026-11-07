@@ -7,7 +7,7 @@
 
 ### 背景与架构体系
 
-AzurPilot on Android（ALAS-AOS）采用双层分离架构：
+AzurPilot for Android 采用双层分离架构：
 1. **App Shell 与特权服务层**：基于 Shizuku 或 root 启动的特权进程管理 1280×720 的无头虚拟显示器（VirtualDisplay），并通过 C++ Bridge 及本地套接字（`127.0.0.1:22301`）提供屏幕捕获与触控注入服务。
 2. **PRoot Runtime 与 AzurPilot 核心**：在 Ubuntu 24.04 运行环境中执行上游 Python 自动化，通过 `azurpilot_android` 后端直连特权桥。
 
@@ -52,7 +52,7 @@ python tools/benchmark_virtual_display.py --stress 100
 python tools/benchmark_virtual_display.py --export output/vd_benchmark.json
 ```
 
-##### AP 协议栈集成模式 (ALAS Stack Mode)
+##### AP 协议栈集成模式 (AzurPilot Stack Mode)
 通过 AzurPilot 的 Device 与 Daemon 体系进行端到端运行：
 ```bash
 python tools/benchmark_virtual_display.py --mode alas --rounds 15
@@ -71,7 +71,7 @@ python dev_tools/emulator_test.py
 
 ### Background and Architecture
 
-AzurPilot on Android (ALAS-AOS) adopts a decoupled two-layer architecture:
+AzurPilot for Android adopts a decoupled two-layer architecture:
 1. **App Shell and Privileged Services**: A privileged process started via Shizuku or root manages a headless 1280×720 VirtualDisplay, exposing screen capture and touch injection services via C++ native bridges and a local socket (`127.0.0.1:22301`).
 2. **PRoot Runtime and AzurPilot Core**: Upstream Python automation executes inside Ubuntu 24.04 PRoot, directly interacting with the privileged bridge using the `azurpilot_android` backend.
 
@@ -116,7 +116,7 @@ python tools/benchmark_virtual_display.py --stress 100
 python tools/benchmark_virtual_display.py --export output/vd_benchmark.json
 ```
 
-##### ALAS Stack Mode
+##### AzurPilot Stack Mode
 Runs through AzurPilot's complete Device and Daemon pipeline:
 ```bash
 python tools/benchmark_virtual_display.py --mode alas --rounds 15

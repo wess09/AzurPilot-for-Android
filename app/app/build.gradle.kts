@@ -111,7 +111,7 @@ abstract class SyncAndroidHostOverlayTask : DefaultTask() {
 }
 
 val syncAndroidHostOverlay = tasks.register<SyncAndroidHostOverlayTask>("syncAndroidHostOverlay") {
-    overlayFiles.from(listOf("android_host.py", "sitecustomize.py", "android_ocr.py", "android_equipment.py", "android_device.py", "android_app_launch.py", "android_capture.py", "android_ntp.py", "android_update.py").map {
+    overlayFiles.from(listOf("android_host.py", "sitecustomize.py", "android_ocr.py", "android_equipment.py", "android_device.py", "android_app_launch.py", "android_capture.py", "android_ntp.py", "android_update.py", "android_config_compat.py").map {
         rootDir.parentFile.resolve("rootfs/overlays/$it")
     })
     outputDir.set(layout.buildDirectory.dir("generated/androidHostOverlay"))

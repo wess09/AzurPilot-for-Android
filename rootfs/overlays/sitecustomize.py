@@ -56,6 +56,16 @@ if os.environ.get("AZURPILOT_ANDROID") == "1":
 
     install_update()
 
+    try:
+        from android_config_compat import install as install_config_compat
+
+        install_config_compat()
+    except ImportError as error:
+        import sys as _sys
+
+        print(f'[azurpilot] android_config_compat overlay unavailable, skipped: {error}',
+              file=_sys.stderr)
+
     # 宿主未注入 OCR 地址时，保持旧 APK 和构建质量门的 CPU 行为。
     if os.environ.get("AZURPILOT_OCR_ADDRESS"):
         from android_ocr import install as install_ocr

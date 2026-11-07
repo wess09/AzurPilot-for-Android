@@ -91,6 +91,12 @@ func respond(w http.ResponseWriter, status int, value any) {
 func failure(w http.ResponseWriter, status int, message string) {
 	respond(w, status, map[string]string{"error": message})
 }
+
+// 错误码供客户端识别业务状态，避免把配对失效误报为接口不存在。
+// Error codes distinguish pairing states from missing API routes.
+func pairingFailure(w http.ResponseWriter, status int, code, message string) {
+	respond(w, status, map[string]string{"code": code, "error": message})
+}
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	d.DisallowUnknownFields()
@@ -303,7 +309,7 @@ func (s *service) createPairing(w http.ResponseWriter, r *http.Request) {
 func (s *service) claim(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if !s.allowed("claim:"+ip, 5) || !s.allowed("claim:global", 120) {
-		failure(w, 429, "尝试过于频繁，请稍后重试")
+		pairingFailure(w, 429, "PAIRING_RATE_LIMITED", "尝试过于频繁，请稍后重试")
 		return
 	}
 	var p claim
@@ -311,7 +317,7 @@ func (s *service) claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !codePattern.MatchString(p.Code) && !(p.Code == "" && opticalSecretPattern.MatchString(p.ScanSecret)) {
-		failure(w, 400, "请输入六位配对码")
+		pairingFailure(w, 400, "INVALID_PAIRING_CODE", "请输入六位配对码")
 		return
 	}
 	tx, err := s.db.Begin()
@@ -328,8 +334,12 @@ func (s *service) claim(w http.ResponseWriter, r *http.Request) {
 		lookup, value = "p.scan_hash", digest(p.ScanSecret)
 	}
 	err = tx.QueryRow(`SELECT p.id,p.device_id,p.token,p.scan_hash,p.expires,p.claimed,d.name,d.tunnel_url,d.seen FROM pairings p JOIN devices d ON d.id=p.device_id WHERE `+lookup+`=?`, value).Scan(&id, &device, &token, &scanHash, &expires, &claimed, &name, &tunnel, &seen)
-	if err != nil || claimed != 0 || expires <= time.Now().Unix() || time.Now().Unix()-seen > 180 || (p.ScanSecret != "" && subtle.ConstantTimeCompare([]byte(scanHash), []byte(digest(p.ScanSecret))) != 1) {
-		failure(w, 404, "配对码无效或已过期")
+	if err != nil || claimed != 0 || expires <= time.Now().Unix() || (p.ScanSecret != "" && subtle.ConstantTimeCompare([]byte(scanHash), []byte(digest(p.ScanSecret))) != 1) {
+		pairingFailure(w, 410, "PAIRING_UNAVAILABLE", "配对码无效、已领取或已过期，请在 AP 重新生成")
+		return
+	}
+	if time.Now().Unix()-seen > 180 {
+		pairingFailure(w, 503, "DEVICE_OFFLINE", "AP 暂时离线，请确认 AP 的远程访问已就绪后重试")
 		return
 	}
 	if _, err = tx.Exec("UPDATE pairings SET claimed=1,token='' WHERE id=? AND claimed=0", id); err != nil {
@@ -348,7 +358,7 @@ func (s *service) pairingStatus(w http.ResponseWriter, r *http.Request) {
 	var expires int64
 	var claimed int
 	if s.db.QueryRow("SELECT device_id,expires,claimed FROM pairings WHERE id=?", r.PathValue("id")).Scan(&device, &expires, &claimed) != nil {
-		failure(w, 404, "配对已过期")
+		pairingFailure(w, 410, "PAIRING_EXPIRED", "配对已失效，请重新生成")
 		return
 	}
 	if !s.authorized(r, device) {

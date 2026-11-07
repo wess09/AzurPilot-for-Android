@@ -12,7 +12,7 @@
 
 支持两种评测模式：
 - 直连模式 (Direct Socket)：直接通过 127.0.0.1:22301 与特权桥通信，轻量快速，无多余依赖。
-- AP 栈集成模式 (ALAS Stack)：通过 AzurPilot Device 与 Benchmark 驱动，评测完整运行链路。
+- AP 栈集成模式 (AzurPilot Stack)：通过 AzurPilot Device 与 Benchmark 驱动，评测完整运行链路。
 """
 
 from __future__ import annotations

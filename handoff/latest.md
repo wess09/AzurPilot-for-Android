@@ -1,6 +1,15 @@
-# 2026-09-26 · AzurPilot for Android
+# 2026-11-07 · AzurPilot for Android
 
 ## 最新进度
+
+- 2026-11-07：**电脑端 → Android 端配置导入容错与自动规整**。
+  - 背景与排查：从桌面端 AzurPilot 导出的 JSON 配置在 Android 导入时因三类格式差异被连续拦下（日期微秒时间戳、心情值为 -1 越界、字符串字段为 null 或数字，共 46 处），根因为桌面端写入与校验端规则不一致的上游缺陷（`module/api/config_service.py` 写入带微秒但校验仅认整秒，心情负值未经区间收敛原样写出，字符串字段类型漂移）。
+  - 客户端防御升级（`AzurPilotConfigImport.kt` / `AzurPilotRepository.kt`）：在 Android 导入分批前（`AzurPilotConfigImport.batches` 与 `importConfig`）引入 schema 驱动的值规整器 `sanitize()` 与 `sanitizeContent()`：
+    1. 日期格式：将 `_sync_record_time()` 产生的带微秒串截断为整秒（`YYYY-MM-DD HH:mm:ss`），并转换 ISO 'T' 分隔符；
+    2. 数值区间：按 schema 的 `validate: [min, max]` 区间收敛（如心情 -1 收敛为 0），保留整数类型；
+    3. 类型兜底：字符串字段拿到 null 规整为空串 `""`，拿到数字/布尔规整为字符串字面量（如 `1000` -> `"1000"`）；数值与布尔字段按 schema 默认类型安全转换；
+    4. 差异过滤：规整后的值与当前配置比对，相同值直接跳过，只有真正变更的项才打包进 `config.patch`。
+  - 效果：用户无需先在电脑端运行脚本规整，原装导出配置（如 `azurpilot (2).json`）可在 Android 端直接无缝导入成功。
 
 - 2026-09-26 夜：**KDoc 双语注释 + 版本线切 1.2.0**。
   - 核心链路 6 文件 KDoc 升级 Google 规范中英双语（7290f8c）：ReleaseDownloader/ReleaseUrls/RuntimeArch 全量；AppUpdateManager/RootfsProvisioner/ProotHost 类级补英文镜像。纯注释零行为差异，编译通过。

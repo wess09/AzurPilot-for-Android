@@ -712,7 +712,13 @@ class AzurPilotRepository(
     /** 导入一份配置文件内容；成功后回调拿到实例名 / Imports one config file's content; the callback receives the instance name on success. */
     fun importConfig(name: String, content: String, onImported: (String) -> Unit = {}) {
         scope.launch(AppDispatchers.IO) {
-            val params = JSONObject().put("name", name).put("content", content)
+            val schema = _schema.value
+            val sanitized = if (schema != null) {
+                runCatching { AzurPilotConfigImport.sanitizeContent(content, schema) }.getOrDefault(content)
+            } else {
+                content
+            }
+            val params = JSONObject().put("name", name).put("content", sanitized)
             when (val reply = gateway.call("instances.importConfig", params)) {
                 is AzurPilotGateway.Reply.Ok -> onImported(reply.obj.optString("name", name))
                 is AzurPilotGateway.Reply.Err -> report(reply.message)
