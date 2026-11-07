@@ -18,10 +18,6 @@ spec.loader.exec_module(adapter)
 GAME = 'com.bilibili.azurlane'
 
 
-class HumanTakeover(Exception):
-    """模拟上游停止任务异常。 / Models the upstream task-stop exception."""
-
-
 class LaunchAdapterTest(unittest.TestCase):
     """钉住聚焦仅在启动成功后追加，并保留上游启动契约。
 
@@ -35,8 +31,7 @@ class LaunchAdapterTest(unittest.TestCase):
         class Backend:
             app_start_azurpilot_android = calls.launch
 
-        module = SimpleNamespace(AzurPilotAndroid=Backend, logger=Mock(),
-                                 RequestHumanTakeover=HumanTakeover)
+        module = SimpleNamespace(AzurPilotAndroid=Backend, logger=Mock())
         adapter.patch_ap_module(module)
         device = Backend()
         device.package = GAME
@@ -112,33 +107,43 @@ class LaunchAdapterTest(unittest.TestCase):
         requests = [call.args[0] for call in calls.bridge.call_args_list]
         self.assertEqual([r['displayId'] for r in requests if r['method'] == 'app_focus'], [7, 9])
 
-    def test_prepare_denial_stops_task_without_launch_or_focus(self):
-        _, device, calls = self.fixture()
+    def test_prepare_denial_warns_and_still_launches_and_focuses(self):
+        module, device, calls = self.fixture()
         calls.bridge.side_effect = [
             {'displayId': 7, 'capabilities': {'nativeGameResolution': True}},
             {'ok': False, 'error': 'APS refused native resolution (status=-3)'},
+            {'displayId': 7, 'capabilities': {'appFocus': True}},
+            {'ok': True},
         ]
-        with self.assertRaisesRegex(HumanTakeover, 'status=-3'):
-            device.app_start_azurpilot_android()
-        calls.launch.assert_not_called()
-        self.assertEqual(calls.bridge.call_count, 2)
+        self.assertEqual(device.app_start_azurpilot_android(), 'upstream result')
+        calls.launch.assert_called_once()
+        self.assertIn('APS refused native resolution (status=-3)',
+                      module.logger.warning.call_args.args[0])
+        self.assertEqual([call.args[0]['method'] for call in calls.bridge.call_args_list],
+                         ['ping', 'app_prepare', 'ping', 'app_focus'])
 
-    def test_prepare_disconnect_stops_task_without_launch(self):
-        _, device, calls = self.fixture()
+    def test_prepare_disconnect_warns_and_still_launches(self):
+        module, device, calls = self.fixture()
         calls.bridge.side_effect = [
             {'displayId': 7, 'capabilities': {'nativeGameResolution': True}},
             OSError('disconnected'),
+            {'displayId': 7, 'capabilities': {'appFocus': True}},
+            {'ok': True},
         ]
-        with self.assertRaisesRegex(HumanTakeover, 'disconnected'):
-            device.app_start_azurpilot_android()
-        calls.launch.assert_not_called()
+        self.assertEqual(device.app_start_azurpilot_android(), 'upstream result')
+        calls.launch.assert_called_once()
+        module.logger.warning.assert_called_once()
 
-    def test_prepare_missing_display_id_stops_task_without_launch(self):
-        _, device, calls = self.fixture()
-        calls.bridge.side_effect = [{'capabilities': {'nativeGameResolution': True}}]
-        with self.assertRaises(HumanTakeover):
-            device.app_start_azurpilot_android()
-        calls.launch.assert_not_called()
+    def test_prepare_missing_display_id_warns_and_still_launches(self):
+        module, device, calls = self.fixture()
+        calls.bridge.side_effect = [
+            {'capabilities': {'nativeGameResolution': True}},
+            {'displayId': 7, 'capabilities': {'appFocus': True}},
+            {'ok': True},
+        ]
+        self.assertEqual(device.app_start_azurpilot_android(), 'upstream result')
+        calls.launch.assert_called_once()
+        module.logger.warning.assert_called_once()
 
     def test_focus_only_bridge_still_launches_without_prepare(self):
         _, device, calls = self.fixture()

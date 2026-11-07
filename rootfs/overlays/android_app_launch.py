@@ -1,6 +1,7 @@
-"""在 AP 启动游戏前关闭兼容缩放，启动后请求虚拟屏窗口焦点。
+"""在 AP 启动游戏前尽力关闭兼容缩放，启动后请求虚拟屏窗口焦点。
 
-Disables compatibility scaling before AP launches a game and requests virtual-window focus afterward.
+Best-effort disables compatibility scaling before AP launches a game and requests virtual-window
+focus afterward.
 """
 
 import importlib.abc
@@ -11,10 +12,10 @@ TARGET_MODULE = 'module.device.method.azurpilot_android'
 
 
 def patch_ap_module(module):
-    """保留上游启动参数和等待行为，在支持的桥上准备原生渲染并追加聚焦。
+    """保留上游启动参数和等待行为，在支持的桥上尽力准备原生渲染并追加聚焦。
 
-    Retains upstream launch arguments and wait behavior, preparing native rendering and adding focus
-    on supporting bridges.
+    Retains upstream launch arguments and wait behavior, best-effort preparing native rendering and
+    adding focus on supporting bridges.
     """
     backend = module.AzurPilotAndroid
     if getattr(backend, '_android_launch_adapter', False):
@@ -22,24 +23,26 @@ def patch_ap_module(module):
     original = backend.app_start_azurpilot_android
 
     def app_start(self, package=None, activity=None, wait=True):
-        """准备原生渲染后启动并聚焦指定包；准备失败停止任务，聚焦失败只记录警告。
+        """尽力关闭兼容缩放后启动并聚焦指定包；准备与聚焦失败均只记录警告。
 
-        Prepares native rendering, then launches and focuses the package. Preparation failure stops
-        the task, while focus failure only warns.
+        Best-effort disables compatibility scaling, then launches and focuses the package. Both
+        preparation and focus failures only warn.
         """
         target = package or self.package
         ping = self._azurpilot_android_call({'method': 'ping'})
         if ping.get('capabilities', {}).get('nativeGameResolution'):
+            # 关兼容缩放只是尽力而为的优化：鸿蒙等系统的 APS 会拒绝该请求（status=-3），但游戏仍能在
+            # 虚拟屏上正常渲染。若在此致命失败会连累后面的 app_focus——focus 缺失才会真正黑屏；
+            # 最坏情况只是缩放没关掉，上游本就有针对缩放画面的重试逻辑，属可恢复软失败。
             try:
                 response = self._azurpilot_android_call({
                     'method': 'app_prepare', 'package': target, 'displayId': ping['displayId'],
                 })
                 if not response.get('ok'):
-                    raise RuntimeError(response.get('error', 'unknown'))
+                    module.logger.warning(
+                        f'Android 原生分辨率准备失败，已跳过: {response.get("error", "unknown")}')
             except Exception as error:
-                # 启动失败不能继续走 Restart，否则同一裁切画面会形成无限重启循环。
-                raise module.RequestHumanTakeover(
-                    f'无法关闭游戏分辨率缩放，请检查系统权限：{error}') from error
+                module.logger.warning(f'Android 原生分辨率准备暂不可用，已跳过: {error}')
         result = original(self, package=package, activity=activity, wait=wait)
         try:
             ping = self._azurpilot_android_call({'method': 'ping'})
