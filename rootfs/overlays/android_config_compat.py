@@ -32,6 +32,7 @@ This module patches the upstream service upon import to:
 import functools
 import importlib.abc
 import importlib.machinery
+import inspect
 import json
 from pathlib import Path
 import re
@@ -219,19 +220,24 @@ def patch_ap_module(module) -> None:
     for target in targets:
         # 拦截 _sync_record_time
         if hasattr(target, '_sync_record_time'):
-            orig_sync = getattr(target, '_sync_record_time')
+            # 上游是 @staticmethod(fields, arg, now=None)：包装必须按原始描述符形态原样
+            # 转发参数。此前无条件按实例方法前置 self，静态方法被塞进第 4 个位置参数，
+            # 上游每个 config.patch 都会在这里炸 TypeError，任务配置全部无法保存。
+            raw_sync = inspect.getattr_static(target, '_sync_record_time')
+            sync_kind = type(raw_sync) if isinstance(raw_sync, (staticmethod, classmethod)) else None
+            sync_func = raw_sync.__func__ if sync_kind else raw_sync
 
-            @functools.wraps(orig_sync)
-            def wrapped_sync(self, *args, **kwargs):
-                res = orig_sync(self, *args, **kwargs)
-                for arg in args:
-                    if isinstance(arg, dict):
-                        _sanitize_dict_dates(arg)
-                    elif hasattr(arg, 'data') and isinstance(arg.data, dict):
-                        _sanitize_dict_dates(arg.data)
+            @functools.wraps(sync_func)
+            def wrapped_sync(*args, **kwargs):
+                res = sync_func(*args, **kwargs)
+                for value in args + tuple(kwargs.values()):
+                    if isinstance(value, dict):
+                        _sanitize_dict_dates(value)
+                    elif hasattr(value, 'data') and isinstance(value.data, dict):
+                        _sanitize_dict_dates(value.data)
                 return res
 
-            setattr(target, '_sync_record_time', wrapped_sync)
+            setattr(target, '_sync_record_time', sync_kind(wrapped_sync) if sync_kind else wrapped_sync)
 
         # 拦截 validate
         for val_name in ('validate', '_validate'):
@@ -244,6 +250,8 @@ def patch_ap_module(module) -> None:
                     return orig_val(self, path, sanitized, *args, **kwargs)
 
                 setattr(target, val_name, wrapped_val)
+                # 两个候选名语义相同，包一个就够；继续循环会撞闭包晚绑定
+                break
 
         # 拦截 patch
         if hasattr(target, 'patch'):
@@ -251,33 +259,37 @@ def patch_ap_module(module) -> None:
 
             @functools.wraps(orig_patch)
             def wrapped_patch(self, *args, **kwargs):
-                # changes 可能是位置参数或关键字参数
-                if len(args) >= 2 and isinstance(args[1], list):
-                    for change in args[1]:
-                        if isinstance(change, dict) and 'path' in change and 'value' in change:
+                # 上游按 (name, revision, changes) 位置调用：changes 在 args[2]，
+                # args[1] 是 revision。changes 条目既有 dict 也有 pydantic ConfigChange 对象。
+                changes = args[2] if len(args) >= 3 and isinstance(args[2], list) else kwargs.get('changes')
+                for change in changes if isinstance(changes, list) else []:
+                    if isinstance(change, dict):
+                        if 'path' in change and 'value' in change:
                             change['value'] = _sanitize_value(change['path'], change['value'], schema)
-                elif 'changes' in kwargs and isinstance(kwargs['changes'], list):
-                    for change in kwargs['changes']:
-                        if isinstance(change, dict) and 'path' in change and 'value' in change:
-                            change['value'] = _sanitize_value(change['path'], change['value'], schema)
+                    else:
+                        path = getattr(change, 'path', None)
+                        if isinstance(path, str) and hasattr(change, 'value'):
+                            change.value = _sanitize_value(path, change.value, schema)
                 return orig_patch(self, *args, **kwargs)
 
             setattr(target, 'patch', wrapped_patch)
 
-        # 拦截 import_config
-        if hasattr(target, 'import_config'):
-            orig_import = getattr(target, 'import_config')
+        # 拦截配置导入：上游方法是 save_import(name, content)，历史名仅作兜底
+        for import_name in ('save_import', 'import_config'):
+            if hasattr(target, import_name):
+                orig_import = getattr(target, import_name)
 
-            @functools.wraps(orig_import)
-            def wrapped_import(self, *args, **kwargs):
-                if len(args) >= 2 and isinstance(args[1], str):
-                    args = list(args)
-                    args[1] = _sanitize_config_json(args[1], schema)
-                elif 'content' in kwargs and isinstance(kwargs['content'], str):
-                    kwargs['content'] = _sanitize_config_json(kwargs['content'], schema)
-                return orig_import(self, *args, **kwargs)
+                @functools.wraps(orig_import)
+                def wrapped_import(self, *args, **kwargs):
+                    if len(args) >= 2 and isinstance(args[1], str):
+                        args = list(args)
+                        args[1] = _sanitize_config_json(args[1], schema)
+                    elif 'content' in kwargs and isinstance(kwargs['content'], str):
+                        kwargs['content'] = _sanitize_config_json(kwargs['content'], schema)
+                    return orig_import(self, *args, **kwargs)
 
-            setattr(target, 'import_config', wrapped_import)
+                setattr(target, import_name, wrapped_import)
+                break
 
     module._android_config_compat_installed = True
 
