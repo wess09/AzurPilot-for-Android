@@ -6,6 +6,9 @@ java { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaV
 sourceSets.main {
     kotlin.srcDirs("../../app/app/src/main/kotlin", "fixtures")
     kotlin.include("com/azurpilot/ghio/proot/AzurPilotGateway.kt")
+    kotlin.include("com/azurpilot/ghio/proot/AzurPilotStatistics.kt")
+    kotlin.include("com/azurpilot/ghio/proot/AzurPilotResourceFlows.kt")
+    kotlin.include("com/azurpilot/ghio/proot/AzurPilotValues.kt")
     kotlin.include("com/azurpilot/ghio/remoteaccess/ParticleCode.kt")
     kotlin.include("**/GatewayEnvironment.kt", "**/RemoteEnvironment.kt", "**/DispatchEnvironment.kt", "**/LogEnvironment.kt")
 }

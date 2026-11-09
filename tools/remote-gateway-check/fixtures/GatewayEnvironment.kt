@@ -5,4 +5,3 @@ object RuntimeConnection {
     var endpoint = Endpoint("http://127.0.0.1:1/")
     data class Endpoint(val base: String) { val wsUrl get() = base + "api/v1/ws" }
 }
-typealias ApValue = Any?

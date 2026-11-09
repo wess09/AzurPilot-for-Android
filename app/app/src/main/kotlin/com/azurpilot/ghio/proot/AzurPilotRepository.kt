@@ -392,7 +392,12 @@ class AzurPilotRepository(
 
             "preview" -> applyPreview(event.optJSONObject("data"))
 
-            "statistics" -> _statisticsTick.value = System.currentTimeMillis()
+            "statistics" -> {
+                val instance = event.optJSONObject("data")?.optText("instance")
+                if (instance == null || instance == _selectedInstance.value) {
+                    _statisticsTick.update { it + 1 }
+                }
+            }
         }
     }
 
@@ -837,162 +842,85 @@ class AzurPilotRepository(
         return AzurPilotShopValidation(reply.obj.optBoolean("valid"), diagnostics)
     }
 
-    /**
-     * 拉整份统计报表并在 Default 调度器上解析，避免在界面线程遍历数据。
-     * 未选实例时以 NOT_FOUND 失败。
-     *
-     * Fetches and parses the full statistics report on Default, avoiding traversal on the UI thread.
-     * Fails with NOT_FOUND when no instance is selected.
-     */
-    suspend fun statisticsReport(query: AzurPilotStatsQuery): Result<AzurPilotStatisticsReport> =
+    /** 加载指定实例的统计报表。 / Loads the statistics report for the requested instance. */
+    suspend fun statisticsReport(instance: String, query: AzurPilotStatsQuery): Result<AzurPilotStatisticsReport> =
         withContext(AppDispatchers.Default) {
-            val instance =
-                _selectedInstance.value
-                    ?: return@withContext Result.failure(AzurPilotException("NOT_FOUND", "未选择实例"))
-            val params =
-                JSONObject()
-                    .put("instance", instance)
-                    .put("category", query.category.key)
-                    .put("days", query.days)
-                    .put("period", query.period)
-                    .put("series", query.series)
-                    .put("scope", query.scope)
+            val params = JSONObject().put("instance", instance).put("category", query.category.key)
+                .put("days", query.days).put("period", query.period).put("series", query.series)
+                .put("scope", query.scope)
             query.month?.let { params.put("month", it) }
             query.task?.let { params.put("task", it) }
-            val reply = gateway.call("statistics.report", params)
-            if (reply !is AzurPilotGateway.Reply.Ok) return@withContext reply.asFailure()
-            val data = reply.obj
-            Result.success(
-                AzurPilotStatisticsReport(
-                    instance = data.optString("instance"),
-                    category = data.optString("category"),
-                    month = data.optString("month"),
-                    metrics =
-                        data
-                            .optJSONArray("metrics")
-                            ?.let { array ->
-                                List(array.length()) { index ->
-                                        val item = array.optJSONObject(index) ?: return@List null
-                                        AzurPilotMetric(
-                                            label = item.optString("label"),
-                                            value = (item.opt("value") as? Number)?.toDouble(),
-                                            unit = item.optString("unit"),
-                                            icon = item.optText("icon"),
-                                        )
-                                    }
-                                    .filterNotNull()
-                            }
-                            .orEmpty(),
-                    series =
-                        data
-                            .optJSONArray("series")
-                            ?.let { array ->
-                                List(array.length()) { index ->
-                                        val item = array.optJSONObject(index) ?: return@List null
-                                        AzurPilotStatSeries(
-                                            key = item.optString("key"),
-                                            label = item.optString("label"),
-                                            points =
-                                                item
-                                                    .optJSONArray("points")
-                                                    ?.let { points ->
-                                                        List(points.length()) { p ->
-                                                                val point =
-                                                                    points.optJSONObject(p)
-                                                                        ?: return@List null
-                                                                AzurPilotStatPoint(
-                                                                    time = point.optString("time"),
-                                                                    value =
-                                                                        (point.opt("value") as? Number)
-                                                                            ?.toDouble() ?: 0.0,
-                                                                    source = point.optText("source"),
-                                                                )
-                                                            }
-                                                            .filterNotNull()
-                                                    }
-                                                    .orEmpty(),
-                                        )
-                                    }
-                                    .filterNotNull()
-                            }
-                            .orEmpty(),
-                    tables =
-                        data
-                            .optJSONArray("tables")
-                            ?.let { array ->
-                                List(array.length()) { index ->
-                                        val item = array.optJSONObject(index) ?: return@List null
-                                        val sort = item.optJSONObject("defaultSort")
-                                        AzurPilotStatTable(
-                                            title = item.optString("title"),
-                                            columns =
-                                                item
-                                                    .optJSONArray("columns")
-                                                    ?.let { c ->
-                                                        List(c.length()) { c.optString(it) }
-                                                    }
-                                                    .orEmpty(),
-                                            rows =
-                                                item
-                                                    .optJSONArray("rows")
-                                                    ?.let { rows ->
-                                                        List(rows.length()) { r ->
-                                                            rows
-                                                                .optJSONArray(r)
-                                                                ?.toValueList()
-                                                                .orEmpty()
-                                                        }
-                                                    }
-                                                    .orEmpty(),
-                                            note = item.optString("note"),
-                                            defaultSortIndex = sort?.optInt("index"),
-                                            defaultSortDescending =
-                                                sort?.optBoolean("descending") ?: false,
-                                        )
-                                    }
-                                    .filterNotNull()
-                            }
-                            .orEmpty(),
-                    notes =
-                        data
-                            .optJSONArray("notes")
-                            ?.let { array ->
-                                List(array.length()) { array.optString(it) }
-                            }
-                            .orEmpty(),
-                    taskOptions =
-                        data
-                            .optJSONArray("taskOptions")
-                            ?.let { array ->
-                                List(array.length()) { index ->
-                                        val item = array.optJSONObject(index) ?: return@List null
-                                        AzurPilotTaskOption(
-                                            key = item.optString("key"),
-                                            label = item.optString("label"),
-                                            count = item.optInt("count"),
-                                        )
-                                    }
-                                    .filterNotNull()
-                            }
-                            .orEmpty(),
-                )
-            )
+            when (val reply = gateway.call("statistics.report", params)) {
+                is AzurPilotGateway.Reply.Ok -> runCatching {
+                    decodeStatisticsReport(reply.obj, currentSchemaLanguage()).also {
+                        check(it.instance == instance && it.category == query.category.key)
+                    }
+                }
+                else -> reply.asFailure()
+            }
         }
 
-    /**
-     * 让网关重扫战利品数据；完成后 [statisticsTick] 自增驱动界面重取
-     *
-     * Asks the gateway to rescan loot data; [statisticsTick] bumps on
-     * completion to drive a UI refetch.
-     */
-    fun refreshLoot() {
-        val instance = _selectedInstance.value ?: return
-        scope.launch(AppDispatchers.IO) {
-            when (val reply = gateway.call("statistics.refreshLoot", JSONObject().put("instance", instance))) {
-                is AzurPilotGateway.Reply.Ok -> _statisticsTick.value = System.currentTimeMillis()
-                is AzurPilotGateway.Reply.Err -> report(reply.message)
-                AzurPilotGateway.Reply.Offline -> Unit
+    /** 重新扫描实例的掉落记录。 / Rescans the instance's saved loot records. */
+    suspend fun refreshLoot(instance: String): Result<Unit> =
+        when (val reply = gateway.call("statistics.refreshLoot", JSONObject().put("instance", instance))) {
+            is AzurPilotGateway.Reply.Ok -> Result.success(Unit)
+            else -> reply.asFailure()
+        }
+
+    /** 启动仓库扫描前等待配置保存。 / Waits for pending configuration writes before starting a warehouse scan. */
+    suspend fun runStorageStatistics(instance: String): Result<Unit> {
+        val source = sourceId.value
+        if (!configEditor.settle() || instance != selectedInstance.value || source != sourceId.value) {
+            return AzurPilotGateway.Reply.Offline.asFailure()
+        }
+        val params = JSONObject().put("instance", instance).put("task", "StorageStatistics")
+        return when (val reply = gateway.call("tasks.run", params)) {
+            is AzurPilotGateway.Reply.Ok -> {
+                applyOverview(reply.obj)
+                Result.success(Unit)
             }
+            else -> reply.asFailure()
+        }
+    }
+
+    /** 加载资源汇总与一页流水。 / Loads resource totals and one page of transactions. */
+    suspend fun resourceFlows(instance: String, query: AzurPilotFlowQuery): Result<AzurPilotFlowReport> =
+        withContext(AppDispatchers.Default) {
+            val params = JSONObject().put("instance", instance).put("days", query.days)
+                .put("offset", query.offset).put("limit", query.limit)
+            query.start?.let { params.put("start", it) }
+            query.end?.let { params.put("end", it) }
+            query.resource?.let { params.put("resource", it) }
+            query.task?.let { params.put("task", it) }
+            query.throughId?.let { params.put("through_id", it) }
+            when (val reply = gateway.call("statistics.resourceFlows", params)) {
+                is AzurPilotGateway.Reply.Ok -> runCatching {
+                    check(reply.obj.getString("instance") == instance)
+                    decodeResourceFlows(reply.obj, currentSchemaLanguage())
+                }
+                else -> reply.asFailure()
+            }
+        }
+
+    /** 原子保存石油控制开关和目标值。 / Saves the oil-control toggle and target together. */
+    suspend fun saveOilControl(instance: String, enabled: Boolean, target: Int): Result<Unit> {
+        val source = sourceId.value
+        if (!configEditor.settle()) return AzurPilotGateway.Reply.Offline.asFailure()
+        if (instance != selectedInstance.value || source != sourceId.value) return AzurPilotGateway.Reply.Offline.asFailure()
+        val params = JSONObject().put("instance", instance)
+        val current = gateway.call("config.get", params)
+        if (current !is AzurPilotGateway.Reply.Ok) return current.asFailure()
+        if (instance != selectedInstance.value || source != sourceId.value) return AzurPilotGateway.Reply.Offline.asFailure()
+        val changes = JSONArray()
+            .put(JSONObject().put("path", "General.OilControl.Enable").put("value", enabled))
+            .put(JSONObject().put("path", "General.OilControl.Target").put("value", target))
+        val patch = params.put("revision", current.obj.optString("revision")).put("changes", changes)
+        return when (val reply = gateway.call("config.patch", patch)) {
+            is AzurPilotGateway.Reply.Ok -> {
+                if (instance == selectedInstance.value && source == sourceId.value) configEditor.load(instance, force = true)
+                Result.success(Unit)
+            }
+            else -> reply.asFailure()
         }
     }
 
