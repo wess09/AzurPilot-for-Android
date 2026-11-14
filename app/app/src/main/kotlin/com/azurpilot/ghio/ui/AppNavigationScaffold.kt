@@ -26,6 +26,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -90,6 +92,7 @@ internal fun AppNavigationScaffold(
     val appearanceSettings by settingsManager.appearance.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val currentPage = mainPagerState.pagerState.currentPage
+    val gestureExclusion = remember { MainPagerGestureExclusion() }
     LaunchedEffect(currentPage) { mainPagerState.syncPage() }
     val navEventState = rememberNavigationEventState(NavigationEventInfo.None)
     NavigationBackHandler(
@@ -125,7 +128,12 @@ internal fun AppNavigationScaffold(
                 modifier =
                     Modifier.fillMaxSize()
                         .clipToBounds()
-                        .pagerGestureOverride(mainPagerState.pagerState, mode = pagerMode)
+                        .onGloballyPositioned { gestureExclusion.pagerOrigin = it.positionInRoot() }
+                        .pagerGestureOverrideExcluding(
+                            mainPagerState.pagerState,
+                            mode = pagerMode,
+                            isTouchExcluded = gestureExclusion::contains,
+                        )
                         .then(
                             if (
                                 enableFloatingBottomBar &&
@@ -159,7 +167,9 @@ internal fun AppNavigationScaffold(
                     ),
             ) { page ->
                 if (contentReady || page == mainPagerState.pagerState.settledPage) {
-                    content(page, bottomInnerPadding)
+                    CompositionLocalProvider(LocalMainPagerGestureExclusion provides gestureExclusion) {
+                        content(page, bottomInnerPadding)
+                    }
                 }
             }
         }

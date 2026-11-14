@@ -17,7 +17,10 @@ android {
     sourceSets {
         named("androidTest") {
             // 独立设备测试避开引用旧运行时类型的历史测试集。
-            if (providers.gradleProperty("oobeTestsOnly").orNull == "true") {
+            if (providers.gradleProperty("gestureTestsOnly").orNull == "true") {
+                kotlin.directories.clear()
+                kotlin.directories.add("src/gestureTest/kotlin")
+            } else if (providers.gradleProperty("oobeTestsOnly").orNull == "true") {
                 kotlin.directories.clear()
                 kotlin.directories.add("src/oobeTest/kotlin")
             } else if (providers.gradleProperty("remoteAccessTestsOnly").orNull == "true") {
@@ -50,6 +53,9 @@ android {
 
     defaultConfig {
         providers.gradleProperty("oobeTestApplicationId").orNull?.let { applicationId = it }
+        if (providers.gradleProperty("gestureTestsOnly").orNull == "true") {
+            testInstrumentationRunner = "com.azurpilot.ghio.ui.GestureTestRunner"
+        }
         externalNativeBuild {
             cmake {
                 arguments += "-DANDROID_STL=c++_shared"
