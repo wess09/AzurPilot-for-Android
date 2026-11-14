@@ -1,0 +1,230 @@
+{
+  "repository": "https://github.com/tiann/KernelSU",
+  "revision": "6e3860443f8fea7c5fc226277e53888033796488",
+  "license": "GPL-3.0",
+  "adaptations": [
+    "Package/import namespaces and opt-ins adapted.",
+    "App identity, links, settings storage, business destinations/actions adapted.",
+    "KernelSU module-only appearance option omitted.",
+    "Android 28-30 Material seed fallback; no WebUI CSS bridge needed.",
+    "InteractiveHighlight skips Android RuntimeShader construction below API 33, preserving gesture and plain highlight.",
+    "About icon uses the app PNG instead of an inset drawable; redundant end-of-file blank lines normalized."
+  ],
+  "sources": [
+    {
+      "source": "ui/component/FloatingBottomBar.kt",
+      "destination": "ui/ksu/component/FloatingBottomBar.kt",
+      "source_sha256": "b19c6774b998ecdd980164c66ee4b7a00b325b47ff8ec1aefdacaef2610f241a"
+    },
+    {
+      "source": "ui/component/liquid/CombinedBackdrop.kt",
+      "destination": "ui/ksu/component/liquid/CombinedBackdrop.kt",
+      "source_sha256": "14c5523d4efb3999b141ac0e196c0966ccfc66574f014d57950f848daa4faf23"
+    },
+    {
+      "source": "ui/component/liquid/InnerShadow.kt",
+      "destination": "ui/ksu/component/liquid/InnerShadow.kt",
+      "source_sha256": "a3c6ead92cf9e4e021d6abf8dedf97c0c62015881ebda6dfe4363a128e7ebdba"
+    },
+    {
+      "source": "ui/component/liquid/Lens.kt",
+      "destination": "ui/ksu/component/liquid/Lens.kt",
+      "source_sha256": "8c91905f5235e22a2e93e9c1f43438d2d1aa564b3688f8aeb69540eecc662bd9"
+    },
+    {
+      "source": "ui/component/liquid/Vibrancy.kt",
+      "destination": "ui/ksu/component/liquid/Vibrancy.kt",
+      "source_sha256": "69573a7740fab7a80ef72acde5a124216d273be23ec68c82a1503971cde481db"
+    },
+    {
+      "source": "ui/component/miuix/animation/DampedDragAnimation.kt",
+      "destination": "ui/ksu/component/miuix/animation/DampedDragAnimation.kt",
+      "source_sha256": "db93ce43a16fd512c6a36f0c8f77e770ec192557b69b9f982b5d487e393b169c"
+    },
+    {
+      "source": "ui/component/miuix/animation/InteractiveHighlight.kt",
+      "destination": "ui/ksu/component/miuix/animation/InteractiveHighlight.kt",
+      "source_sha256": "b26fda9205957ad8ec9c08321fb6c31fedb6f0a44a7eb308a72844771723acf5"
+    },
+    {
+      "source": "ui/component/miuix/effect/BgEffectBackground.kt",
+      "destination": "ui/ksu/component/miuix/effect/BgEffectBackground.kt",
+      "source_sha256": "11c0cd62419de53cb12f932d4447b45240ecfc7923dad07fdb38a7ffd12505f3"
+    },
+    {
+      "source": "ui/component/miuix/effect/BgEffectConfig.kt",
+      "destination": "ui/ksu/component/miuix/effect/BgEffectConfig.kt",
+      "source_sha256": "69f118a42532d9ac340ccd5a74c217ce07bd01976cd3a44ecb1f0f298da4af4e"
+    },
+    {
+      "source": "ui/component/miuix/effect/BgEffectModifier.kt",
+      "destination": "ui/ksu/component/miuix/effect/BgEffectModifier.kt",
+      "source_sha256": "121975805eb61589f04ccc48796c87af9732661b718700f6acaa880ea903008d"
+    },
+    {
+      "source": "ui/component/miuix/effect/BgEffectPainter.kt",
+      "destination": "ui/ksu/component/miuix/effect/BgEffectPainter.kt",
+      "source_sha256": "8c1e0e7b582719f23edeca6cd619f4d372253a45367ab291547d881deb33e05b"
+    },
+    {
+      "source": "ui/component/miuix/effect/ColorBlendToken.kt",
+      "destination": "ui/ksu/component/miuix/effect/ColorBlendToken.kt",
+      "source_sha256": "2949f9280759e5e15d02e49aa2c7098540edd471e61d50b0b63ba85127448af4"
+    },
+    {
+      "source": "ui/component/miuix/effect/DeviceType.kt",
+      "destination": "ui/ksu/component/miuix/effect/DeviceType.kt",
+      "source_sha256": "2753aaa755e2a60e22cd9df1ce12e1f4c60306884f80e3dea970d9cf2b75dc8e"
+    },
+    {
+      "source": "ui/component/miuix/effect/OS3BgFrag.kt",
+      "destination": "ui/ksu/component/miuix/effect/OS3BgFrag.kt",
+      "source_sha256": "457a120cdc27bd54d7dcfda31603aa8bb47cebb8a9726edceb46699ecfae2ed1"
+    },
+    {
+      "source": "ui/component/miuix/modifier/DragGestureInspector.kt",
+      "destination": "ui/ksu/component/miuix/modifier/DragGestureInspector.kt",
+      "source_sha256": "be57c44ee67962fa0b2b178f29f4a0738a44e36b2ffad836ac0f3be760fd1395"
+    },
+    {
+      "source": "ui/component/miuix/ScaleDialog.kt",
+      "destination": "ui/ksu/component/miuix/ScaleDialog.kt",
+      "source_sha256": "bac381cfea5664dec7100cb460492495538a2f0b751db17bab0ea872aaf2045c"
+    },
+    {
+      "source": "ui/util/DeferredContent.kt",
+      "destination": "ui/ksu/DeferredContent.kt",
+      "source_sha256": "29ef5cd158c8c25ab1a4cd26b88f36dfccbd078a231bd5e6c244f20d36e86778"
+    },
+    {
+      "source": "ui/component/bottombar/BottomBar.kt",
+      "destination": "ui/ksu/MainPagerState.kt",
+      "source_sha256": "50aabbcb344592b72b1e8fc4c8c8e41b8bfd46a22497cede51aa4d9d4495c932"
+    },
+    {
+      "source": "ui/component/material/ExpressiveDialog.kt",
+      "destination": "ui/ksu/material/ExpressiveDialog.kt",
+      "source_sha256": "837a0e6a5dd93e674e907488a0323c1096a2712adbe8a653812137c76a870277"
+    },
+    {
+      "source": "ui/component/material/ExpressiveMenu.kt",
+      "destination": "ui/ksu/material/ExpressiveMenu.kt",
+      "source_sha256": "371187c33278d5610afc57ffabf36f3fac5fbdfa783f1756c6c63ada826f0e64"
+    },
+    {
+      "source": "ui/component/material/ExpressiveScaffold.kt",
+      "destination": "ui/ksu/material/ExpressiveScaffold.kt",
+      "source_sha256": "9ba615a969afcd1471f542b6bca0ba677185db37a4149656b87a22e71e9b5086"
+    },
+    {
+      "source": "ui/component/material/ExpressiveSwitch.kt",
+      "destination": "ui/ksu/material/ExpressiveSwitch.kt",
+      "source_sha256": "cc4b25a8aad4a09f22b778372a6a5a960e2d9d8d41fd150c6965df70accce4dd"
+    },
+    {
+      "source": "ui/component/material/ExpressiveTabRow.kt",
+      "destination": "ui/ksu/material/ExpressiveTabRow.kt",
+      "source_sha256": "89305fb1a1eb7e3a8ea654bc2f9ed199cc02e1041a19917640ffeca5b7833253"
+    },
+    {
+      "source": "ui/component/material/ExpressiveToggleButton.kt",
+      "destination": "ui/ksu/material/ExpressiveToggleButton.kt",
+      "source_sha256": "8157b3d4590af2bb43e5cab8015b8baf948f1eba4c024752b0df153fd34b4f86"
+    },
+    {
+      "source": "ui/component/material/SegmentedList.kt",
+      "destination": "ui/ksu/material/SegmentedList.kt",
+      "source_sha256": "f78909f16ecedfcc5d9cc73ebc95639a13944cd6ec6df72226de8335399bf4db"
+    },
+    {
+      "source": "ui/component/material/TonalCard.kt",
+      "destination": "ui/ksu/material/TonalCard.kt",
+      "source_sha256": "e51c8c9924471a7449d0a31ddd8d4b2a6fd317048c5a7a3ff9af35353706bb6c"
+    },
+    {
+      "source": "ui/component/material/TopBarBackButton.kt",
+      "destination": "ui/ksu/material/TopBarBackButton.kt",
+      "source_sha256": "cbf01c00e08b5d91433d97f99fa56bf82c20e3e124f9c0d3e4e52054fe188b87"
+    },
+    {
+      "source": "ui/screen/about/AboutMaterial.kt",
+      "destination": "ui/ksu/screen/about/AboutMaterial.kt",
+      "source_sha256": "ba0fcca97a2a0e8ff3f4af25b525ee420fd92a1f853169a3afa47fcf86602bfa"
+    },
+    {
+      "source": "ui/screen/about/AboutMiuix.kt",
+      "destination": "ui/ksu/screen/about/AboutMiuix.kt",
+      "source_sha256": "2aba6092677dac193d08e07ae884b11a56bcd4df504262ed3cd065feddd73056"
+    },
+    {
+      "source": "ui/screen/about/AboutUiState.kt",
+      "destination": "ui/ksu/screen/about/AboutUiState.kt",
+      "source_sha256": "2cfd04e44cd91e119c5011ca5d5193281c7cec17237e50836f80e25b3e0de2e9"
+    },
+    {
+      "source": "ui/screen/about/AboutUtils.kt",
+      "destination": "ui/ksu/screen/about/AboutUtils.kt",
+      "source_sha256": "9fe36f1ada2eddd5c428696f53e9b506c64b54081082fec7b9aee459f39df9d8"
+    },
+    {
+      "source": "ui/screen/colorpalette/ColorPaletteScreenMaterial.kt",
+      "destination": "ui/ksu/screen/colorpalette/ColorPaletteScreenMaterial.kt",
+      "source_sha256": "a0619e64cf9ea9aff6a57970fa022d8f94ee45a0e515c86b12c06f6502e38885"
+    },
+    {
+      "source": "ui/screen/colorpalette/ColorPaletteScreenMiuix.kt",
+      "destination": "ui/ksu/screen/colorpalette/ColorPaletteScreenMiuix.kt",
+      "source_sha256": "ef19fd8a3129619317c0a0ad8d318aa4a1c16cac185d97ad21c0d5dc5d71475b"
+    },
+    {
+      "source": "ui/screen/colorpalette/ColorPaletteUiState.kt",
+      "destination": "ui/ksu/screen/colorpalette/ColorPaletteUiState.kt",
+      "source_sha256": "4392c46b91d2eee4f6e68b0ec381f27ffa0b31002ba698e57c04b09c4a4d472f"
+    },
+    {
+      "source": "ui/util/BlurExt.kt",
+      "destination": "ui/ksu/util/BlurExt.kt",
+      "source_sha256": "b69b16ad09e78ce844c03bb365cc5d43aceab0104605405ce79c654d6b564b62"
+    },
+    {
+      "source": "ui/util/WindowSize.kt",
+      "destination": "ui/ksu/WindowSize.kt",
+      "source_sha256": "60efb0c18d2e9f03fd570e874ecf89013e4bafb937272b515add40ac12c8bed1"
+    },
+    {
+      "source": "ui/theme/Colors.kt",
+      "destination": "theme/ksu/Colors.kt",
+      "source_sha256": "7ed5daeb3704664aa5ff564af1f1b17571751fe7d924de468666c93b44afa4eb"
+    },
+    {
+      "source": "ui/theme/MaterialTheme.kt",
+      "destination": "theme/ksu/MaterialTheme.kt",
+      "source_sha256": "120c473f47942169fdf9c305847dc7c6b3db33f37cf240d2797fa7844ba632f8"
+    },
+    {
+      "source": "ui/theme/MiuixTheme.kt",
+      "destination": "theme/ksu/MiuixTheme.kt",
+      "source_sha256": "fd9b3d1dfc4c5ef7e8e3e7ca9faf47b0861742e7ba8df92a80d35d34d282b3c8"
+    },
+    {
+      "source": "ui/theme/Theme.kt",
+      "destination": "theme/ksu/Theme.kt",
+      "source_sha256": "f7ebc63c4dca3a1344f16cf344b1d5b9f69006ff294c08c7154e6d30a61983c7"
+    },
+    {
+      "source": "ui/theme/ThemeExt.kt",
+      "destination": "theme/ksu/ThemeExt.kt",
+      "source_sha256": "5463a2d00394706e240e8762c587c3372e3fa48ad96dd1a84acffacbb5004a7c"
+    },
+    {
+      "source": "ui/theme/Type.kt",
+      "destination": "theme/ksu/Type.kt",
+      "source_sha256": "5385e78325c6b9dd8fca6987f79f030fdcd7466bb0e36bd4ce0a9f4c2d991991"
+    },
+    {
+      "source": "ui/UiMode.kt",
+      "destination": "theme/ksu/UiMode.kt",
+      "source_sha256": "68b99dbafff8bc25ad9d535f9b85e2260b73f044328eeaee5a2afcf2b5c4f4b9"
+    }
+  ]
+}
