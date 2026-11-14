@@ -28,6 +28,7 @@ AFA 每次连接都请求固定入口所属服务的 `/api/v1/devices/{id}/resol
 IPv4 / IPv6 候选。从手机当前网络请求候选的 `/healthz`，确认设备 ID 与协议后，以 HTTP/WS
 直连；所有直连都失败时请求 `/fallback` 启动 Cloudflare，再以 HTTPS/WSS 连接。
 会话失败的入口暂时排除三十秒，每次重连重新解析。AP 重启、动态 IP 或 Tunnel URL 改变无需重新配对。
+等待 Cloudflare 时继续检查新出现的直连地址，可达后立即连接，不等待隧道完成。
 旧服务返回 404/405 时兼容禁止缓存的 301 跳转，严格校验 `https://<name>.trycloudflare.com/`。
 设备离线时，浏览器入口以 302 跳到 `/error`；原生客户端提示稍后重试，重新打开会重新解析入口。
 
@@ -137,8 +138,9 @@ Every connection reads `/api/v1/devices/{id}/resolve` from the registry, checks 
 from the phone's network using `/healthz`, validates the device ID, and connects over HTTP/WS.
 If no direct route works, it requests `/fallback` and connects through Cloudflare over HTTPS/WSS.
 Failed sessions exclude their route for thirty seconds. Reconnection resolves again, so AP restarts,
-dynamic IP changes, and tunnel changes do not require pairing again. Legacy 404/405 responses retain
-the non-cacheable 301 path with strict `https://<name>.trycloudflare.com/` validation.
+dynamic IP changes, and tunnel changes do not require pairing again.
+Direct routes are checked again while waiting for Cloudflare, so a newly reachable IP connects immediately.
+Legacy 404/405 responses retain the non-cacheable 301 path with strict `https://<name>.trycloudflare.com/` validation.
 Offline browser entries receive a 302 to `/error`. Native clients show a retry message; reopening resolves the entry again.
 
 Try Quick Tunnel saves `cloudflare` as the local AP remote mode and requests a runtime restart.

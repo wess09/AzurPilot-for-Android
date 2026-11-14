@@ -77,6 +77,15 @@ class RemoteConnections(private val client: OkHttpClient) {
             }
     }.getOrDefault(false)
 
+    private fun direct(data: JSONObject, deviceId: String): String? {
+        val endpoints = data.optJSONArray("endpoints") ?: return null
+        for (index in 0 until endpoints.length()) {
+            val url = endpoints.optJSONObject(index)?.optString("url").orEmpty()
+            if (isDirect(url) && !excluded(url) && reachable(url, deviceId)) return url.trimEnd('/') + "/"
+        }
+        return null
+    }
+
     /**
      * 每次重连重新读取候选，旧服务保留 301 解析；全程不向注册服务发送 AP 登录凭据。
      *
@@ -99,11 +108,7 @@ class RemoteConnections(private val client: OkHttpClient) {
             check(it.code == 301 && isTunnel(location)) { "AP 暂时离线" }
             location.trimEnd('/') + "/"
         }
-        val endpoints = data.optJSONArray("endpoints")
-        if (endpoints != null) for (index in 0 until endpoints.length()) {
-            val url = endpoints.optJSONObject(index)?.optString("url").orEmpty()
-            if (isDirect(url) && !excluded(url) && reachable(url, deviceId)) return url.trimEnd('/') + "/"
-        }
+        direct(data, deviceId)?.let { return it }
         val tunnel = data.optString("tunnel_url")
         if (isTunnel(tunnel) && !excluded(tunnel)) return tunnel.trimEnd('/') + "/"
         client.newCall(Request.Builder().url("$api/fallback").post(ByteArray(0).toRequestBody()).build())
@@ -112,6 +117,7 @@ class RemoteConnections(private val client: OkHttpClient) {
         while (System.nanoTime() < deadline) {
             delay(2000)
             val updated = read() ?: throw IOException("注册服务协议已变化")
+            direct(updated, deviceId)?.let { return it }
             val next = updated.optString("tunnel_url")
             if (isTunnel(next) && !excluded(next)) return next.trimEnd('/') + "/"
         }

@@ -74,4 +74,24 @@ class RemoteConnectionsTest {
         assertEquals("https://fallback.trycloudflare.com/", resolver.resolve(entry, id))
         assertTrue(requested)
     }
+
+    @Test fun usesNewDirectRouteWhileCloudflareIsStillStarting() = runBlocking {
+        var requested = false
+        val resolver = RemoteConnections(client { request ->
+            when {
+                request.url.encodedPath.endsWith("/fallback") -> {
+                    requested = true
+                    200 to "{}"
+                }
+                request.url.encodedPath == "/healthz" -> 200 to
+                    JSONObject().put("status", "ok").put("protocolVersion", 1).put("device_id", id).toString()
+                else -> 200 to JSONObject().put("device_id", id).put("tunnel_url", "")
+                    .put("endpoints", JSONArray().apply {
+                        if (requested) put(JSONObject().put("url", "http://1.1.1.1:25549"))
+                    }).toString()
+            }
+        })
+        assertEquals("http://1.1.1.1:25549/", resolver.resolve(entry, id))
+        assertTrue(requested)
+    }
 }
