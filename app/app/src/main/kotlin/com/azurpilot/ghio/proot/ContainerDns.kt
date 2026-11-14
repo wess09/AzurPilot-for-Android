@@ -17,20 +17,20 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
- * 容器 DNS 供给：DoH 主路由预解析，阿里 UDP 53 兜底（#31）。
+ * 容器 DNS 供给：DoH 主路由预解析，resolv.conf 兜底（#31）。
  *
  * 部分校园网/企业网丢弃发往公共 DNS 的 UDP 53，而容器内 glibc 只认 resolv.conf
  * 里的 53 端口 nameserver，App 进程又无权绑 53 做本地转发（该端口还常被 VPN 类
  * 应用占用）。「DoH 优先」因此落地为：会话启动前，把热更新 Git 源、镜像加速、
  * 旧运行时前端下载基址与 NTP 等已知关键域名经 DoH（443 端口，不受 UDP 53 拦截
- * 影响）解析，写入容器 /etc/hosts 受管块；其余域名继续走 resolv.conf 的阿里
- * DNS 兜底（[ProotHost.writeResolvConf]）。
+ * 影响）解析，写入容器 /etc/hosts 受管块；其余域名走 resolv.conf
+ * （[ProotHost.writeResolvConf]）：活跃网络的系统 DNS 优先，不可用时阿里兜底。
  *
  * 受管块每次会话启动整块重写，陈旧 IP 的存活期不超过一次会话；解析全程限时、
- * 逐项容错，任何失败只降级为「无预解析」（回到阿里兜底），绝不阻塞启动。
+ * 逐项容错，任何失败只降级为「无预解析」（回到 resolv.conf 兜底），绝不阻塞启动。
  *
- * Container DNS provisioning: DoH-first pre-resolution with Ali UDP 53 as the
- * fallback (issue #31).
+ * Container DNS provisioning: DoH-first pre-resolution with resolv.conf as
+ * the fallback (issue #31).
  *
  * Some campus/enterprise networks drop UDP 53 toward public DNS servers, while
  * the guest's glibc only understands port-53 nameservers from resolv.conf, and
@@ -39,13 +39,14 @@ import java.util.concurrent.TimeUnit
  * pre-resolving the known-critical hostnames (hot-update Git sources, mirror
  * prefixes, the legacy frontend download base, and NTP servers) over DoH
  * (port 443, immune to UDP 53 filtering) into a managed block of the guest
- * /etc/hosts before each session; everything else keeps falling back to the Ali
- * DNS in resolv.conf ([ProotHost.writeResolvConf]).
+ * /etc/hosts before each session; everything else goes through resolv.conf
+ * ([ProotHost.writeResolvConf]): the active network's system DNS first, with
+ * AliDNS as the fallback.
  *
  * The managed block is rewritten wholesale at every session start, so a stale
  * address lives no longer than one session; resolution is time-boxed and
  * tolerant per entry — any failure merely degrades to "no pre-resolution"
- * (Ali fallback) and never blocks startup.
+ * (resolv.conf fallback) and never blocks startup.
  */
 class ContainerDns {
 

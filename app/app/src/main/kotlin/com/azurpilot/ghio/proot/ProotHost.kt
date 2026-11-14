@@ -1,6 +1,7 @@
 package com.azurpilot.ghio.proot
 
 import android.app.Application
+import android.net.ConnectivityManager
 import android.os.Build
 import com.azurpilot.ghio.AppDispatchers
 import com.azurpilot.ghio.constant.AppPaths
@@ -32,6 +33,7 @@ import timber.log.Timber
 import java.io.File
 import java.io.RandomAccessFile
 import java.net.HttpURLConnection
+import java.net.InetAddress
 import java.net.URL
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
@@ -983,27 +985,77 @@ class ProotHost(
     }
 
     /**
-     * resolv.conf 只承担兜底（#31）：烘焙包里的 /etc/resolv.conf 是指向
-     * /run/systemd 的悬空软链，必须换成普通文件；默认阿里 DNS。关键域名（热更
-     * 源/NTP 等）的主路由是 DoH 预解析进 /etc/hosts（[ContainerDns]）——部分
-     * 网络丢弃发往公共 DNS 的 UDP 53，此兜底在这些网络不可用，DoH 走 443 不受
-     * 影响。
+     * 写入 guest 的 /etc/resolv.conf：活跃网络的系统 DNS 优先，阿里兜底收尾。
      *
-     * resolv.conf serves as the fallback only (issue #31): the baked
-     * /etc/resolv.conf is a dangling symlink to /run/systemd and must become a
-     * regular file; AliDNS is the default. The primary route for critical
-     * hostnames (hot-update sources, NTP, …) is DoH pre-resolution into
-     * /etc/hosts ([ContainerDns]) — some networks drop UDP 53 toward public
-     * DNS servers, where this fallback is unreachable while DoH over 443 is
-     * unaffected.
+     * 烘焙包里的 /etc/resolv.conf 是指向 /run/systemd 的悬空软链，必须换成普通
+     * 文件。关键域名（热更源/NTP 等）的主路由是 DoH 预解析进 /etc/hosts
+     * （[ContainerDns]），本文件承担其余域名：按系统公布顺序写入活跃网络的
+     * DNS，尾部追加阿里兜底，合计不超过 [MAX_RESOLV_NAMESERVERS] 条（glibc
+     * 的 MAXNS 也只取前三条）。部分网络丢弃发往公共 DNS 的 UDP 53，此时系统
+     * DNS 的明文查询不可达则追加的阿里兜底同样不可用，DoH 走 443 不受影响。
+     *
+     * 边界：proot 不隔离网络命名空间，guest 与宿主共用同一协议栈，系统 DNS 可
+     * 经宿主网络路径使用；但 guest 的 glibc 是明文查询，不继承 Android 的
+     * Private DNS（DoT）行为，明文可达性仍受网络策略影响。DNS 快照只在会话
+     * 启动时取一次，启动后切换网络不会热刷，重启会话才会刷新。
+     *
+     * Writes the guest /etc/resolv.conf: the active network's system DNS
+     * first, with the AliDNS fallback appended at the tail.
+     *
+     * In the baked image /etc/resolv.conf is a dangling symlink to
+     * /run/systemd and must become a regular file. The primary route for
+     * critical hostnames (hot-update sources, NTP, …) is DoH pre-resolution
+     * into /etc/hosts ([ContainerDns]); this file carries the rest: the
+     * active network's DNS servers in the order the system published them,
+     * with the AliDNS fallback appended, totalling at most
+     * [MAX_RESOLV_NAMESERVERS] entries (glibc's MAXNS also honours only the
+     * first three). Some networks drop UDP 53 toward public DNS servers,
+     * where unreachable system plaintext queries make the appended AliDNS
+     * fallback equally unreachable — DoH over 443 is unaffected.
+     *
+     * Boundaries: proot shares the host network stack, so system resolvers
+     * are usable via the host network path; the guest's glibc queries in
+     * plaintext and does not inherit Android's private DNS (DoT), so
+     * plaintext reachability still depends on network policy. The DNS
+     * snapshot is taken once at session start; later network switches do
+     * not refresh it until the session restarts.
      */
     private fun writeResolvConf() {
         runCatching {
+            // 采集失败退化为阿里兜底；内容生成完成后才删除旧文件。删除成功后若写入
+            // 失败，旧文件已丢失，下次会话启动会再次尝试重写
+            val content = resolvConfContent(systemDnsServers())
             val f = File(rootfsDir, "etc/resolv.conf")
             if (Files.isSymbolicLink(f.toPath()) || f.exists()) f.delete()
-            f.writeText("nameserver 223.5.5.5\nnameserver 223.6.6.6\n")
+            f.writeText(content)
         }.onFailure { Timber.w(it, "write resolv.conf failed") }
     }
+
+    /**
+     * 采集活跃网络的系统 DNS；采集失败返回空列表（调用方据此回退阿里 DNS）。
+     *
+     * 只做最薄的采集，过滤与排序全部放在纯函数 [resolvConfContent] 里便于单测。
+     * 采集包在 runCatching 里：getLinkProperties 等调用可能抛系统服务异常
+     * （RemoteException/SecurityException），此时必须落到空列表让兜底生效，
+     * 而不是让异常逃逸到 writeResolvConf 外层只记一行日志、留下悬空软链。
+     *
+     * Collects the system DNS servers of the active network; returns an empty
+     * list on failure (the caller then falls back to AliDNS).
+     *
+     * Only raw collection lives here; filtering and ordering belong to
+     * [resolvConfContent] so they stay unit-testable. Collection is wrapped
+     * in runCatching because calls such as getLinkProperties may throw
+     * system-server failures (RemoteException/SecurityException); those must
+     * degrade to an empty list so the fallback still lands, instead of
+     * escaping to writeResolvConf's outer log-and-continue and leaving the
+     * dangling symlink in place.
+     */
+    private fun systemDnsServers(): List<String> = runCatching {
+        val cm = app.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
+        val network = cm.activeNetwork ?: return emptyList()
+        val props = cm.getLinkProperties(network) ?: return emptyList()
+        props.dnsServers.mapNotNull { it.hostAddress }
+    }.getOrDefault(emptyList())
 
     /**
      * 确保 guest 的 /etc/passwd 里有 App uid 的条目。
@@ -1139,3 +1191,73 @@ class ProotHost(
         private const val SETTINGS_LOADED_WAIT_MS = 2_000L
     }
 }
+
+/**
+ * 生成 resolv.conf 文本：系统 DNS 按系统公布顺序去重后，尾部追加阿里兜底，
+ * 合计不超过 [MAX_RESOLV_NAMESERVERS] 条。
+ *
+ * Renders the resolv.conf text: the system DNS de-duplicated in the order
+ * the system published them, with the AliDNS fallback appended at the tail,
+ * totalling at most [MAX_RESOLV_NAMESERVERS] entries.
+ */
+internal fun resolvConfContent(systemServers: List<String>): String {
+    val usable = systemServers.filter { !isUnusableResolver(it) }.distinct()
+    val servers = (usable + FALLBACK_DNS.filter { it !in usable })
+        .take(MAX_RESOLV_NAMESERVERS)
+    return buildString {
+        for (server in servers) append("nameserver ").append(server).append('\n')
+    }
+}
+
+/**
+ * 判断系统 DNS 在 resolv.conf 里是否不可用：空白、无 scope 的 IPv6 link-local
+ * （缺 scope 无法访问）、IPv4 带 scope 后缀（resolv.conf 语法只允许 IPv6 带
+ * scope）。带 scope 的 IPv6 link-local（如 fe80::1%wlan0）合法且常见，必须保留
+ * ——glibc ≥ 2.39 会为其设置 sin6_scope_id；IPv4 link-local（169.254/16）无需
+ * scope，同样保留。判断用地址语义而非 fe80: 前缀：IPv6 link-local 是
+ * fe80::/10，fe81::-febf:: 同属该段。
+ *
+ * 输入契约：仅接受由系统地址对象（LinkProperties.dnsServers → InetAddress.hostAddress）
+ * 产生的文本，不是任意用户输入。
+ *
+ * Reports whether a system DNS entry is unusable in resolv.conf: blank, an
+ * unscoped IPv6 link-local address (unreachable without a scope), or an IPv4
+ * address with a scope suffix (only IPv6 may carry a scope in resolv.conf
+ * syntax). A scoped IPv6 link-local such as fe80::1%wlan0 is legal and common
+ * and must be kept — glibc ≥ 2.39 sets sin6_scope_id for it; IPv4 link-local
+ * (169.254/16) needs no scope and is kept as well. Address semantics are
+ * used instead of an fe80: prefix test because IPv6 link-local is
+ * fe80::/10, so fe81:: through febf:: belong to it too.
+ *
+ * Input contract: text produced by system address objects
+ * (LinkProperties.dnsServers → InetAddress.hostAddress), not arbitrary user
+ * input.
+ */
+private fun isUnusableResolver(address: String): Boolean {
+    if (address.isBlank()) return true
+    val host = address.substringBefore('%')
+    val scoped = host.length != address.length
+    val linkLocal = runCatching { InetAddress.getByName(host).isLinkLocalAddress }
+        .getOrDefault(false)
+    return when {
+        linkLocal && ':' in host -> !scoped
+        scoped -> ':' !in host
+        else -> false
+    }
+}
+
+/**
+ * 提供系统 DNS 不可用时的兜底解析器（mainland）。
+ *
+ * Provides the fallback resolvers used when the system DNS is unavailable
+ * (mainland).
+ */
+private val FALLBACK_DNS = listOf("223.5.5.5", "223.6.6.6")
+
+/**
+ * resolv.conf 的 nameserver 上限：glibc 的 MAXNS 为 3，多写不生效。
+ *
+ * The nameserver cap for resolv.conf: glibc's MAXNS is 3, extra entries are
+ * ignored.
+ */
+private const val MAX_RESOLV_NAMESERVERS = 3
