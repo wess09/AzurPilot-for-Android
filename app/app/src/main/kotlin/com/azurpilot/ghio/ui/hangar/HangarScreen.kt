@@ -70,6 +70,7 @@ import com.azurpilot.ghio.ui.components.AppActionLabel
 import com.azurpilot.ghio.ui.components.AppSymbol
 import com.azurpilot.ghio.constant.DefaultDisplayConfig
 import com.azurpilot.ghio.domain.RemoteBackend
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.theme.ksu.LocalUiMode
 import com.azurpilot.ghio.theme.ksu.UiMode
 import com.azurpilot.ghio.privileged.PermissionManager
@@ -119,6 +120,7 @@ fun HangarScreen(
     modifier: Modifier = Modifier,
     bottomInnerPadding: Dp = 0.dp,
     onOpenSettings: () -> Unit = {},
+    onOpenScreenSettings: () -> Unit = onOpenSettings,
     onSettingsAnchorChanged: (Offset) -> Unit = {},
     onOpenTasks: () -> Unit = {},
     onOpenRemote: () -> Unit = {},
@@ -143,14 +145,15 @@ fun HangarScreen(
     val access by permissionManager.state.collectAsStateWithLifecycle()
     val settings: com.azurpilot.ghio.settings.AppSettingsManager = koinInject()
     val remoteClientMode by settings.remoteClientMode.collectAsStateWithLifecycle()
+    val runMode by settings.runMode.collectAsStateWithLifecycle()
     val remoteMode = remoteClientMode || sourceId != "local"
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
     // 仅在虚拟屏确实不存在时补拉环境。返回主页不能再次主动探测桥接，
     // 否则探测的短暂失败会把已就绪的页面闪成「正在准备设备」。
-    LaunchedEffect(active, host.privilegedConnected, remoteMode, provisionState) {
-        if (!remoteMode && provisionState is ProvisionState.Ready &&
+    LaunchedEffect(active, host.privilegedConnected, remoteMode, provisionState, runMode) {
+        if (runMode == RunMode.BACKGROUND && !remoteMode && provisionState is ProvisionState.Ready &&
             active && host.privilegedConnected &&
             hostState.snapshot.value.vdDisplayId == DefaultDisplayConfig.DISPLAY_NONE
         ) {
@@ -174,7 +177,7 @@ fun HangarScreen(
             busy = schedulerBusy,
         )
         provisionState !is ProvisionState.Ready -> HomeMode.RUNTIME_MISSING
-        else -> homeMode(run, proot, host, access)
+        else -> homeMode(run, proot, host, access, runMode)
     }
 
     val gearAnchor = Modifier.onGloballyPositioned { coordinates ->
@@ -226,13 +229,26 @@ fun HangarScreen(
             HomeRunCard(
                 mode = mode,
                 targetName = if (remoteMode) remoteName else null,
+                descriptionOverride = when {
+                    remoteMode || runMode != RunMode.FOREGROUND -> null
+                    mode in listOf(HomeMode.NEEDS_ACTION, HomeMode.RUNNING_INTERRUPTED) ->
+                        host.environmentIssue?.messageRes
+                    mode == HomeMode.READY -> R.string.primary_home_ready
+                    else -> null
+                },
                 onStart = {
                     if (remoteMode) repository.dismissMessage()
                     if (remoteMode) repository.setSchedulerRunning(true) else runController.startRunner()
                 },
                 onStop = {
-                    if (remoteMode) repository.dismissMessage()
-                    if (remoteMode) repository.setSchedulerRunning(false) else runController.stopRunner()
+                    when {
+                        remoteMode -> {
+                            repository.dismissMessage()
+                            repository.setSchedulerRunning(false)
+                        }
+                        mode == HomeMode.TOOL_ACTIVE -> runController.stopTool()
+                        else -> runController.stopRunner()
+                    }
                 },
                 onRetry = {
                     if (remoteMode) repository.dismissMessage()
@@ -246,7 +262,9 @@ fun HangarScreen(
                             permissionManager.bindService()
                         }
                         HomeMode.NEEDS_CONNECTION -> scope.launch { permissionManager.bindService() }
-                        HomeMode.NEEDS_ACTION -> onOpenSettings()
+                        HomeMode.NEEDS_ACTION -> if (runMode == RunMode.FOREGROUND) {
+                            onOpenScreenSettings()
+                        } else onOpenSettings()
                         HomeMode.NO_INSTANCE -> onOpenTasks()
                         else -> Unit
                     }
@@ -352,10 +370,12 @@ private fun homeMode(
     proot: ProotSnapshot,
     host: HostSnapshot,
     access: RemoteAccessState,
+    runMode: RunMode,
 ): HomeMode = when {
     run.busy -> when {
         run.runnerAlive -> HomeMode.STOPPING
-        host.vdDisplayId == DefaultDisplayConfig.DISPLAY_NONE -> HomeMode.PREPARING_DEVICE
+        runMode == RunMode.BACKGROUND && host.vdDisplayId == DefaultDisplayConfig.DISPLAY_NONE ->
+            HomeMode.PREPARING_DEVICE
         // 设备已创建但桥暂时不可达是连接问题，不应误报为重新准备设备。
         !host.bridgeReachable -> HomeMode.CONNECTING
         else -> HomeMode.STARTING
@@ -363,15 +383,24 @@ private fun homeMode(
 
     // 运行状态与设备控制状态是不同的事实；控制丢失时不能宣称运行正常。
     run.reachable && run.statusKnown && run.runnerAlive ->
-        if (host.privilegedConnected && host.environmentUp &&
-            access.isAvailable(access.configuredBackend) &&
-            access.isGranted(access.configuredBackend))
+        if (host.runMode == runMode && host.environmentUp &&
+            (runMode == RunMode.FOREGROUND || (host.privilegedConnected &&
+                access.isAvailable(access.configuredBackend) &&
+                access.isGranted(access.configuredBackend))))
             HomeMode.RUNNING else HomeMode.RUNNING_INTERRUPTED
 
     proot.phase == ProotPhase.UPDATING -> HomeMode.UPDATING
     proot.phase == ProotPhase.PREPARING || proot.phase == ProotPhase.STARTING ->
         HomeMode.PREPARING
     proot.phase == ProotPhase.FAILED -> HomeMode.FAILED
+
+    runMode == RunMode.FOREGROUND -> when {
+        host.runMode != runMode -> HomeMode.CONNECTING
+        host.environmentIssue != null -> HomeMode.NEEDS_ACTION
+        !host.environmentUp || !run.reachable || !run.statusKnown -> HomeMode.CONNECTING
+        run.toolAlive -> HomeMode.TOOL_ACTIVE
+        else -> HomeMode.READY
+    }
 
     // 原来的 ready 只验证了本机 HTTP 接口，Shizuku 没启动也会误显示就绪。
     access.configuredBackend == RemoteBackend.SHIZUKU && !access.shizukuAvailable ->
@@ -393,6 +422,7 @@ private fun homeMode(
 private fun HomeRunCard(
     mode: HomeMode,
     targetName: String?,
+    descriptionOverride: Int? = null,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRetry: () -> Unit,
@@ -419,7 +449,7 @@ private fun HomeRunCard(
         HomeMode.NO_INSTANCE -> R.string.ap_overview_no_instance
         HomeMode.RUNTIME_MISSING -> R.string.home_runtime_title
     }
-    val description = when (mode) {
+    val description = descriptionOverride ?: when (mode) {
         HomeMode.READY -> R.string.home_ready_description
         HomeMode.RUNNING -> R.string.home_running_description
         HomeMode.RUNNING_INTERRUPTED -> R.string.home_running_interrupted_description
@@ -439,7 +469,8 @@ private fun HomeRunCard(
         HomeMode.NO_INSTANCE -> R.string.home_remote_no_instance_description
         HomeMode.RUNTIME_MISSING -> R.string.home_runtime_start_description
     }
-    val isActive = mode == HomeMode.RUNNING || mode == HomeMode.RUNNING_INTERRUPTED
+    val isActive = mode == HomeMode.RUNNING || mode == HomeMode.RUNNING_INTERRUPTED ||
+        mode == HomeMode.TOOL_ACTIVE
     val canResolve = mode == HomeMode.NEEDS_SHIZUKU ||
         mode == HomeMode.NEEDS_AUTH ||
         mode == HomeMode.NEEDS_CONNECTION || mode == HomeMode.NEEDS_ACTION || mode == HomeMode.NO_INSTANCE

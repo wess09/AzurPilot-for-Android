@@ -14,7 +14,6 @@ import com.azurpilot.ghio.remote.internal.SharedFrameServer
 import com.azurpilot.ghio.remote.internal.PermissionGrantHelper
 import com.azurpilot.ghio.service.AccessibilityHelperService
 import com.azurpilot.ghio.remote.internal.PowerController
-import com.azurpilot.ghio.remote.internal.PrimaryDisplayManager
 import com.azurpilot.ghio.remote.internal.ScreenManager
 import com.azurpilot.ghio.remote.internal.SdkTaskRepatriator
 import com.azurpilot.ghio.constant.PrivilegedGrant
@@ -66,7 +65,6 @@ class RemoteServiceImpl : RemoteService.Stub() {
         connection.use { SharedFrameServer.open(it) }
     }
 
-    private val virtualDisplayMode = AtomicInteger(DisplayMode.BACKGROUND)
     private val appPid = AtomicInteger(0)
     private val destroyed = AtomicBoolean(false)
 
@@ -194,32 +192,11 @@ class RemoteServiceImpl : RemoteService.Stub() {
     }
 
     /**
-     * 切显示模式：PRIMARY=主屏镜像采集，BACKGROUND=独立虚拟屏；切换前先停另一路，
-     * 未知模式返回 false
+     * 保留旧 Binder 事务编号；主屏模式使用 App 进程中的无障碍桥。
      *
-     * Switches the display mode: PRIMARY mirrors the primary display, BACKGROUND uses a
-     * standalone virtual display. The other manager is stopped first; unknown modes return
-     * false.
+     * Preserves the legacy Binder transaction ID. Primary mode uses the in-app accessibility bridge.
      */
-    override fun setVirtualDisplayMode(mode: Int): Boolean = synchronized(displayLifecycleLock) {
-        when (mode) {
-            DisplayMode.PRIMARY -> {
-                // 主屏模式下游戏与 SDK 弹页同屏，搬屏盯防没有意义，停掉
-                SdkTaskRepatriator.stop()
-                VirtualDisplayManager.stop()
-                virtualDisplayMode.set(mode)
-                true
-            }
-
-            DisplayMode.BACKGROUND -> {
-                PrimaryDisplayManager.stop()
-                virtualDisplayMode.set(mode)
-                true
-            }
-
-            else -> false
-        }
-    }
+    override fun setVirtualDisplayMode(mode: Int): Boolean = mode == DisplayMode.BACKGROUND
 
     /** 改虚拟屏分辨率，采集中的屏会重启 / Changes the virtual display resolution, restarting a live display */
     override fun setVirtualDisplayResolution(width: Int, height: Int, dpi: Int) {
@@ -232,26 +209,18 @@ class RemoteServiceImpl : RemoteService.Stub() {
     }
 
     /**
-     * 按当前模式拉起显示；BACKGROUND 模式下建屏成功后顺带启动 userActivity 保活
+     * 建立虚拟屏，并启动特权进程中的亮屏保活与看门狗。
      *
-     * Starts the display per the current mode; in BACKGROUND mode a successful creation also
-     * starts the userActivity keep-alive.
+     * Creates the virtual display and starts privileged wakefulness and watchdogs.
      */
     override fun startVirtualDisplay(): Int = synchronized(displayLifecycleLock) {
         if (destroyed.get()) return@synchronized DefaultDisplayConfig.DISPLAY_NONE
-        when (virtualDisplayMode.get()) {
-            DisplayMode.PRIMARY -> PrimaryDisplayManager.start()
-            DisplayMode.BACKGROUND -> VirtualDisplayManager.start().also { displayId ->
-                if (displayId != DefaultDisplayConfig.DISPLAY_NONE) {
-                    PowerController.startUserActivityKeepAlive(displayId)
-                    // 屏建好了才可能跑自动化，SDK 弹页盯防随之启动
-                    SdkTaskRepatriator.start()
-                    // 目标盯防（漂移拉回 / 帧停滞踢活）随之启动，漏起则 stopWatching 悬空
-                    AppWatchdog.startWatching()
-                }
+        VirtualDisplayManager.start().also { displayId ->
+            if (displayId != DefaultDisplayConfig.DISPLAY_NONE) {
+                PowerController.startUserActivityKeepAlive(displayId)
+                SdkTaskRepatriator.start()
+                AppWatchdog.startWatching()
             }
-
-            else -> DefaultDisplayConfig.DISPLAY_NONE
         }
     }
 
@@ -259,13 +228,8 @@ class RemoteServiceImpl : RemoteService.Stub() {
     override fun stopVirtualDisplay() = synchronized(displayLifecycleLock) {
         AppWatchdog.stopWatching()
         SdkTaskRepatriator.stop()
-        when (virtualDisplayMode.get()) {
-            DisplayMode.PRIMARY -> PrimaryDisplayManager.stop()
-            DisplayMode.BACKGROUND -> {
-                PowerController.stopUserActivityKeepAlive()
-                VirtualDisplayManager.stop()
-            }
-        }
+        PowerController.stopUserActivityKeepAlive()
+        VirtualDisplayManager.stop()
     }
 
     /**
@@ -344,9 +308,8 @@ class RemoteServiceImpl : RemoteService.Stub() {
     /** 预览上的手动注入；仅虚拟屏模式生效 / Manual injection for the preview; effective only in virtual display mode */
     override fun touchUp(x: Int, y: Int) = withVirtualDisplay { InputControlUtils.up(x, y, 0, it) }
 
-    /** 主屏模式不接管输入；无虚拟屏时静默丢弃 / Input is not intercepted in PRIMARY mode; silently dropped with no virtual display */
+    /** 无虚拟屏时不注入触摸。 / Touches are dropped when there is no virtual display. */
     private inline fun withVirtualDisplay(action: (Int) -> Unit) {
-        if (virtualDisplayMode.get() == DisplayMode.PRIMARY) return
         val displayId = VirtualDisplayManager.getDisplayId()
         if (displayId != DefaultDisplayConfig.DISPLAY_NONE) action(displayId)
     }
@@ -451,7 +414,6 @@ class RemoteServiceImpl : RemoteService.Stub() {
         step("bridge server") { BridgeServer.stop() }
         step("screen size") { ScreenManager.destroy() }
         step("power") { PowerController.destroy() }
-        step("primary display") { PrimaryDisplayManager.stop() }
         step("virtual display") { VirtualDisplayManager.stop() }
     }
 

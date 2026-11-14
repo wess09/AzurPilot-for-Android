@@ -1,7 +1,7 @@
 package com.azurpilot.ghio.bridge
 
 import com.azurpilot.ghio.remote.internal.ActivityUtils
-import com.azurpilot.ghio.remote.internal.PrimaryDisplayManager
+import android.view.Display
 import com.azurpilot.ghio.third.Ln
 import java.util.Locale
 
@@ -45,14 +45,14 @@ object DriverClass {
     /**
      * 在指定显示器上启动目标应用，并尝试等待首帧观测。
      *
-     * 主屏（[PrimaryDisplayManager.DISPLAY_ID]）走常规启动；虚拟屏启动后会校验应用确实落在
+     * 主屏（[Display.DEFAULT_DISPLAY]）走常规启动；虚拟屏启动后会校验应用确实落在
      * 目标屏，必要时尝试拉回。成功启动后请求窗口焦点，再等待 [FRAME_WAIT_TIMEOUT_MS] 观察
      * native 帧计数前进；
      * 超时只记录警告，不改变启动结果。
      *
      * Launches the target app on the given display and attempts to observe a first frame.
      *
-     * The primary display ([PrimaryDisplayManager.DISPLAY_ID]) takes the plain start. After a virtual-
+     * The primary display ([Display.DEFAULT_DISPLAY]) takes the plain start. After a virtual-
      * display start, the app is checked on the target display and is moved back when possible. A
      * successful start requests window focus, then waits at most [FRAME_WAIT_TIMEOUT_MS] to observe
      * a native frame-counter advance;
@@ -69,7 +69,7 @@ object DriverClass {
     @JvmStatic
     fun startApp(packageName: String, displayId: Int, forceStop: Boolean): Boolean {
         Ln.i(TAG + String.format(Locale.US, "%s %d %b", packageName, displayId, forceStop))
-        if (displayId == PrimaryDisplayManager.DISPLAY_ID) {
+        if (displayId == Display.DEFAULT_DISPLAY) {
             return ActivityUtils.startApp(packageName, displayId, forceStop)
         }
         var ret = ActivityUtils.startApp(packageName, displayId, forceStop, true)

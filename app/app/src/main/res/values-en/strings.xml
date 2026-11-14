@@ -23,8 +23,20 @@
     <string name="settings_theme">Theme</string>
     <string name="settings_cat_display">Display &amp; language</string>
     <string name="settings_cat_display_desc">Theme and language</string>
-    <string name="settings_cat_screen">Virtual display</string>
-    <string name="settings_cat_screen_desc">Virtual display refresh rate</string>
+    <string name="settings_cat_screen">Screen &amp; run mode</string>
+    <string name="settings_cat_screen_desc">Primary screen, virtual display, and refresh rate</string>
+    <string name="settings_run_mode">Run mode</string>
+    <string name="settings_run_mode_virtual">Virtual display</string>
+    <string name="settings_run_mode_primary">Primary screen (accessibility)</string>
+    <string name="settings_run_mode_primary_hint">Requires Android 11 or later. Set your cloud phone’s primary screen to 720p and keep it on and unlocked while running.</string>
+    <string name="primary_android_unsupported">Primary-screen mode requires Android 11 or later.</string>
+    <string name="primary_resolution_required">Set the primary screen to 720p (1280×720 in landscape), then try again.</string>
+    <string name="primary_accessibility_required">Enable the AzurPilot accessibility service in system settings.</string>
+    <string name="primary_bridge_unavailable">Could not connect to the primary screen. Restart AzurPilot and try again.</string>
+    <string name="primary_open_accessibility">Open accessibility settings</string>
+    <string name="primary_home_ready">Keep Azur Lane in the foreground while it runs. You can stop it from the notification.</string>
+    <string name="primary_screen_message">The game runs on the primary screen. View and control it directly there.</string>
+    <string name="primary_notification_ready">Primary screen at 720p · Accessibility connected</string>
     <string name="settings_cat_logs">Logs</string>
     <string name="settings_cat_logs_desc">View and export run logs</string>
     <string name="settings_cat_keep_alive">Keep-Alive</string>
@@ -102,7 +114,7 @@
     <string name="notification_host_content_proot">Built-in AzurPilot Runtime running (no virtual display)</string>
 
     <!-- Floating control layer -->
-    <string name="accessibility_service_description">Press volume up and down together to open the control panel in primary-display mode. Only key events are filtered; screen content is never read.</string>
+    <string name="accessibility_service_description">Primary-screen mode uses accessibility to capture screenshots, identify the foreground game, and send touch gestures. In virtual display mode, press volume up and down together to open the control panel.</string>
     <string name="overlay_panel_title">Control panel</string>
     <string name="overlay_back_to_app">Back to app</string>
     <string name="overlay_lock">Lock position</string>

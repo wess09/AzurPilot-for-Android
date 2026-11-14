@@ -183,7 +183,6 @@
                 android:value="Guards the AzurPilot runtime environment, privileged bridge and virtual display; keeps the app process alive for background automation" />
         </service>
 
-        <!-- 只过滤按键，不读窗口内容；用途见 AccessibilityHelperService -->
         <service
             android:name=".service.AccessibilityHelperService"
             android:exported="false"

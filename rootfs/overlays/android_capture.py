@@ -201,6 +201,7 @@ class _Loader(importlib.abc.Loader):
     def exec_module(self, module):
         self.original.exec_module(module)
         patch_ap_module(module)
+        _patch_primary_display(module)
 
 
 class _Finder(importlib.abc.MetaPathFinder):
@@ -224,6 +225,12 @@ class _Finder(importlib.abc.MetaPathFinder):
         return None
 
 
+def _patch_primary_display(module):
+    if os.environ.get('AZURPILOT_PRIMARY_SOCKET'):
+        from android_primary_display import patch_ap_module as patch_primary
+        patch_primary(module)
+
+
 def install():
     """延迟安装截图通道；已导入模块立即接线，重复安装只注册一次。
 
@@ -232,5 +239,6 @@ def install():
     module = sys.modules.get(TARGET_MODULE)
     if module is not None:
         patch_ap_module(module)
+        _patch_primary_display(module)
     if not any(getattr(finder, '_android_capture_adapter', False) for finder in sys.meta_path):
         sys.meta_path.insert(0, _Finder())

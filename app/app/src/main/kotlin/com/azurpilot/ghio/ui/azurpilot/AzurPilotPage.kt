@@ -38,6 +38,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.azurpilot.ghio.R
 import com.azurpilot.ghio.constant.DefaultDisplayConfig
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.proot.AzurPilotRepository
 import com.azurpilot.ghio.proot.AzurPilotRunController
 import com.azurpilot.ghio.proot.ProotHost
@@ -112,6 +113,7 @@ private fun AzurPilotRuntimeSurface(
     val remoteName by repository.remoteName.collectAsStateWithLifecycle()
     val settings: AppSettingsManager = koinInject()
     val remoteClientMode by settings.remoteClientMode.collectAsStateWithLifecycle()
+    val runMode by settings.runMode.collectAsStateWithLifecycle()
     val authRequired by repository.authRequired.collectAsStateWithLifecycle()
     val hostSnapshot by hostState.snapshot.collectAsStateWithLifecycle()
     val prootState by prootHost.state.collectAsStateWithLifecycle()
@@ -120,8 +122,9 @@ private fun AzurPilotRuntimeSurface(
     val snackbarHostState = remember { SnackbarHostState() }
 
     // 仅在设备不存在时补拉，平级页切换不应重复探测已有的虚拟屏。
-    LaunchedEffect(active, hostSnapshot.privilegedConnected, remoteName, remoteClientMode) {
-        if (!remoteClientMode && remoteName == null && active && hostSnapshot.privilegedConnected &&
+    LaunchedEffect(active, hostSnapshot.privilegedConnected, remoteName, remoteClientMode, runMode) {
+        if (runMode == RunMode.BACKGROUND && !remoteClientMode && remoteName == null &&
+            active && hostSnapshot.privilegedConnected &&
             hostState.snapshot.value.vdDisplayId == DefaultDisplayConfig.DISPLAY_NONE
         ) {
             hostState.ensureEnvironmentStarted()

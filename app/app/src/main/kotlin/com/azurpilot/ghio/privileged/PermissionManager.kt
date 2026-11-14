@@ -9,6 +9,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.azurpilot.ghio.constant.PrivilegedGrant
 import com.azurpilot.ghio.service.AccessibilityHelperService
 import com.azurpilot.ghio.domain.RemoteBackend
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.i18n.uiTextFromFramework
 import com.azurpilot.ghio.settings.AppSettingsManager
 import kotlinx.coroutines.CoroutineScope
@@ -175,8 +176,9 @@ class PermissionManager(
         }
         // 授权到手就把特权进程连上，用户不必再手动点一次
         scope.launch {
-            accessPort.state
-                .map { it.isGranted(it.configuredBackend) }
+            combine(accessPort.state, appSettings.runMode) { access, mode ->
+                mode == RunMode.BACKGROUND && access.isGranted(access.configuredBackend)
+            }
                 .distinctUntilChanged()
                 .filter { it }
                 .collect { servicePort.bind() }

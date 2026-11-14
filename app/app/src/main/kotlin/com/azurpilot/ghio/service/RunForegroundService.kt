@@ -10,10 +10,14 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.azurpilot.ghio.MainActivity
 import com.azurpilot.ghio.R
 import com.azurpilot.ghio.constant.DefaultDisplayConfig
+import com.azurpilot.ghio.domain.RunMode
+import com.azurpilot.ghio.proot.AzurPilotRunController
+import com.azurpilot.ghio.proot.AzurPilotRunState
 import com.azurpilot.ghio.proot.ProotHost
 import com.azurpilot.ghio.proot.ProotSnapshot
 import kotlinx.coroutines.CoroutineScope
@@ -70,9 +74,11 @@ class RunForegroundService : Service() {
 
     private val hostState: HostState by inject()
     private val prootHost: ProotHost by inject()
+    private val runController: AzurPilotRunController by inject()
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var observeJob: Job? = null
+    private var screenLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -87,7 +93,7 @@ class RunForegroundService : Service() {
         ensureChannel()
         // 必须先 startForeground 再判终态：慢一步就是 ForegroundServiceDidNotStartInTimeException
         val initial = hostState.snapshot.value to prootHost.state.value
-        startAsForeground(buildNotification(initial.first, initial.second))
+        startAsForeground(buildNotification(initial.first, runController.state.value))
         if (isTerminal(initial.first, initial.second)) {
             stopNow()
             return
@@ -105,7 +111,13 @@ class RunForegroundService : Service() {
         // 系统可能只走 onStartCommand；FGS 提升要在这里再保一次
         val snapshot = hostState.snapshot.value
         val proot = prootHost.state.value
-        startAsForeground(buildNotification(snapshot, proot))
+        val run = runController.state.value
+        startAsForeground(buildNotification(snapshot, run))
+        if (intent?.action == ACTION_STOP_PRIMARY && snapshot.runMode == RunMode.FOREGROUND &&
+            run.reachable && !run.busy
+        ) {
+            if (run.runnerAlive) runController.stopRunner() else if (run.toolAlive) runController.stopTool()
+        }
         if (isTerminal(snapshot, proot)) {
             stopNow()
         } else {
@@ -117,6 +129,7 @@ class RunForegroundService : Service() {
     override fun onDestroy() {
         observeJob = null
         serviceScope.cancel()
+        releaseScreenLock()
         super.onDestroy()
     }
 
@@ -126,15 +139,46 @@ class RunForegroundService : Service() {
         observeJob = serviceScope.launch { observeSnapshot() }
     }
 
-    /** 合流两份状态：终态即退，否则刷新通知文案 / Combines the two states: exits on the terminal one, else refreshes the notification text. */
+    /**
+     * 随宿主、运行时和任务状态更新通知与主屏亮屏锁。
+     *
+     * Updates the notification and the primary screen wake lock as host, runtime, and task state changes.
+     */
     private suspend fun observeSnapshot() {
-        combine(hostState.snapshot, prootHost.state, ::Pair).collectLatest { (snapshot, proot) ->
-            if (isTerminal(snapshot, proot)) {
-                stopNow()
-                return@collectLatest
+        combine(hostState.snapshot, prootHost.state, runController.state, ::Triple)
+            .collectLatest { (snapshot, proot, run) ->
+                if (isTerminal(snapshot, proot)) {
+                    stopNow()
+                    return@collectLatest
+                }
+                keepPrimaryScreenOn(snapshot, run)
+                notify(buildNotification(snapshot, run))
             }
-            notify(buildNotification(snapshot, proot))
+    }
+
+    @Suppress("DEPRECATION")
+    private fun keepPrimaryScreenOn(snapshot: HostSnapshot, run: AzurPilotRunState) {
+        if (snapshot.runMode != RunMode.FOREGROUND || !snapshot.environmentUp ||
+            !run.reachable || !run.statusKnown || (!run.runnerAlive && !run.toolAlive)
+        ) {
+            releaseScreenLock()
+            return
         }
+        if (screenLock?.isHeld == true) return
+        // 游戏拥有前台窗口，Activity 的 KEEP_SCREEN_ON 不能保证它在任务等待期间亮屏。
+        val power = getSystemService(PowerManager::class.java)
+        if (power.isInteractive) {
+            screenLock = runCatching {
+                power.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK, "$packageName:primary").apply {
+                    acquire()
+                }
+            }.onFailure { Timber.w(it, "Could not keep the primary display on") }.getOrNull()
+        }
+    }
+
+    private fun releaseScreenLock() {
+        screenLock?.let { if (it.isHeld) it.release() }
+        screenLock = null
     }
 
     /**
@@ -187,13 +231,16 @@ class RunForegroundService : Service() {
     }
 
     /**
-     * 组通知文案，两级：屏在→按桥可达性；只剩 proot 会话→对应文案
+     * 主屏模式用通知操作停止任务，避免在截图中显示浮窗。
      *
-     * Builds the notification text, two levels: display present → by bridge
-     * reachability; proot session only → its own text.
+     * Offers a notification action to stop primary-mode runs without putting an overlay in screenshots.
      */
-    private fun buildNotification(snapshot: HostSnapshot, proot: ProotSnapshot): Notification {
-        val content = if (snapshot.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE) {
+    private fun buildNotification(snapshot: HostSnapshot, run: AzurPilotRunState): Notification {
+        val content = if (snapshot.runMode == RunMode.FOREGROUND) {
+            if (snapshot.environmentUp) getString(R.string.primary_notification_ready)
+            else snapshot.environmentIssue?.let { getString(it.messageRes) }
+                ?: getString(R.string.notification_host_content_proot)
+        } else if (snapshot.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE) {
             val contentRes = if (snapshot.bridgeReachable) {
                 R.string.notification_host_content_ok
             } else {
@@ -204,7 +251,7 @@ class RunForegroundService : Service() {
             // 只剩 proot 会话在岗（内置 AzurPilot 环境跑着但还没建屏）
             getString(R.string.notification_host_content_proot)
         }
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.notification_host_title))
             .setContentText(content)
@@ -214,7 +261,17 @@ class RunForegroundService : Service() {
             .setSilent(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .build()
+        if (snapshot.runMode == RunMode.FOREGROUND && run.reachable && !run.busy &&
+            (run.runnerAlive || run.toolAlive)
+        ) {
+            val stop = PendingIntent.getService(
+                this, 1,
+                Intent(this, RunForegroundService::class.java).setAction(ACTION_STOP_PRIMARY),
+                PendingIntent.FLAG_IMMUTABLE,
+            )
+            builder.addAction(0, getString(R.string.hangar_stop), stop)
+        }
+        return builder.build()
     }
 
     /** 通知权限被拒时 notify/cancel 会抛 SecurityException，不能让它掀翻 FGS 主线程 */
@@ -243,6 +300,7 @@ class RunForegroundService : Service() {
         /** 渠道 id；重要性建成就改不了 / The channel id; its importance is immutable once created. */
         private const val CHANNEL_ID = "run_execution"
         private const val NOTIFICATION_ID = 1001
+        private const val ACTION_STOP_PRIMARY = "com.azurpilot.ghio.action.STOP_PRIMARY_RUN"
 
         /**
          * 拉起保活服务；失败只记日志（系统限制启动时不至于崩调用方）

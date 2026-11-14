@@ -1,6 +1,9 @@
 package com.azurpilot.ghio.di
 
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.service.HostState
+import com.azurpilot.ghio.service.PrimaryDisplayBridge
+import com.azurpilot.ghio.settings.AppSettingsManager
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.qualifier.named
 import org.koin.dsl.module
@@ -18,5 +21,9 @@ import org.koin.dsl.module
  * one instance lives in the process.
  */
 val hostModule = module {
-    single { HostState(androidContext(), get(), get(), get(named<AppCoroutineScope>()), get()) }
+    single {
+        val settings = get<AppSettingsManager>()
+        PrimaryDisplayBridge { settings.loaded.value && settings.runMode.value == RunMode.FOREGROUND }
+    }
+    single { HostState(androidContext(), get(), get(), get(named<AppCoroutineScope>()), get(), get()) }
 }

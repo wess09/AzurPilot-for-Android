@@ -23,8 +23,20 @@
     <string name="settings_theme">主题</string>
     <string name="settings_cat_display">显示与语言</string>
     <string name="settings_cat_display_desc">主题与语言</string>
-    <string name="settings_cat_screen">虚拟屏</string>
-    <string name="settings_cat_screen_desc">虚拟屏刷新率</string>
+    <string name="settings_cat_screen">屏幕与运行模式</string>
+    <string name="settings_cat_screen_desc">主屏、虚拟屏与刷新率</string>
+    <string name="settings_run_mode">运行模式</string>
+    <string name="settings_run_mode_virtual">虚拟屏</string>
+    <string name="settings_run_mode_primary">主屏（无障碍）</string>
+    <string name="settings_run_mode_primary_hint">Android 11 及以上。请在云手机设置中将主屏设为 720p，并在运行时保持屏幕亮起且解锁。</string>
+    <string name="primary_android_unsupported">主屏模式需要 Android 11 或更高版本。</string>
+    <string name="primary_resolution_required">请将主屏分辨率设为 720p（横屏 1280×720），然后重试。</string>
+    <string name="primary_accessibility_required">请在系统设置中开启 AzurPilot 无障碍服务。</string>
+    <string name="primary_bridge_unavailable">主屏连接失败，请重启 AzurPilot 后重试。</string>
+    <string name="primary_open_accessibility">打开无障碍设置</string>
+    <string name="primary_home_ready">将在主屏运行碧蓝航线。请保持游戏在前台；可从通知栏停止运行。</string>
+    <string name="primary_screen_message">游戏在主屏运行，请直接在主屏上查看和操作。</string>
+    <string name="primary_notification_ready">主屏 720p · 无障碍已连接</string>
     <string name="settings_cat_logs">日志</string>
     <string name="settings_cat_logs_desc">查看与导出运行日志</string>
     <string name="settings_cat_keep_alive">后台保活</string>
@@ -102,7 +114,7 @@
     <string name="notification_host_content_proot">内置 AzurPilot Runtime 运行中（未建虚拟屏）</string>
 
     <!-- 悬浮控制层 -->
-    <string name="accessibility_service_description">前台模式下同时按音量 + 与音量 − 唤起控制面板。只拦按键，不读取屏幕内容</string>
+    <string name="accessibility_service_description">主屏模式通过无障碍截图、识别前台游戏并模拟触摸。虚拟屏模式可同时按音量 + 和 − 唤起控制面板。</string>
     <string name="overlay_panel_title">操作面板</string>
     <string name="overlay_back_to_app">回到应用</string>
     <string name="overlay_lock">锁定位置</string>

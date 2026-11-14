@@ -23,8 +23,20 @@
     <string name="settings_theme">テーマ</string>
     <string name="settings_cat_display">表示と言語</string>
     <string name="settings_cat_display_desc">テーマと言語</string>
-    <string name="settings_cat_screen">仮想ディスプレイ</string>
-    <string name="settings_cat_screen_desc">仮想ディスプレイのリフレッシュレート</string>
+    <string name="settings_cat_screen">画面と実行モード</string>
+    <string name="settings_cat_screen_desc">メイン画面、仮想ディスプレイ、リフレッシュレート</string>
+    <string name="settings_run_mode">実行モード</string>
+    <string name="settings_run_mode_virtual">仮想ディスプレイ</string>
+    <string name="settings_run_mode_primary">メイン画面（ユーザー補助）</string>
+    <string name="settings_run_mode_primary_hint">Android 11 以降が必要です。クラウド端末のメイン画面を 720p に設定し、実行中は画面を点灯したままロックしないでください。</string>
+    <string name="primary_android_unsupported">メイン画面モードには Android 11 以降が必要です。</string>
+    <string name="primary_resolution_required">メイン画面の解像度を 720p（横画面で 1280×720）に設定して再試行してください。</string>
+    <string name="primary_accessibility_required">システム設定で AzurPilot のユーザー補助サービスを有効にしてください。</string>
+    <string name="primary_bridge_unavailable">メイン画面に接続できません。AzurPilot を再起動して再試行してください。</string>
+    <string name="primary_open_accessibility">ユーザー補助設定を開く</string>
+    <string name="primary_home_ready">実行中はアズールレーンをメイン画面の前面に表示してください。通知から停止できます。</string>
+    <string name="primary_screen_message">ゲームはメイン画面で実行されます。その画面で直接確認・操作してください。</string>
+    <string name="primary_notification_ready">メイン画面 720p · ユーザー補助に接続済み</string>
     <string name="settings_cat_logs">ログ</string>
     <string name="settings_cat_logs_desc">ログの表示とエクスポート</string>
     <string name="settings_cat_keep_alive">バックグラウンド維持</string>
@@ -102,7 +114,7 @@
     <string name="notification_host_content_proot">内蔵 AzurPilot Runtime が実行中（仮想ディスプレイなし）</string>
 
     <!-- フローティング操作レイヤー -->
-    <string name="accessibility_service_description">フォアグラウンドモードでは音量 + と音量 − の同時押しで操作パネルを開きます。キーイベントのみを監視し、画面の内容は読み取りません</string>
+    <string name="accessibility_service_description">メイン画面モードではユーザー補助で画面を撮影し、前面のゲームを識別してタッチ操作を行います。仮想ディスプレイモードでは音量の + と − を同時に押すと操作パネルを開けます。</string>
     <string name="overlay_panel_title">操作パネル</string>
     <string name="overlay_back_to_app">アプリに戻る</string>
     <string name="overlay_lock">位置を固定</string>

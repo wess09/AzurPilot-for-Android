@@ -15,24 +15,13 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 
 /**
- * 只为一件事存在：前台模式下同时按音量 ± 唤起控制面板
+ * 支持音量键快捷方式，并在主屏模式下为设备桥提供截图、手势与前台窗口包名。
  *
- * 前台模式把屏幕让给了目标应用，没有这条快捷键就只剩悬浮球一条路，而悬浮球会挡住画面。
- * 不读窗口内容（`canRetrieveWindowContent=false`），只过滤按键
+ * 服务的连接与回调在主线程处理；设备桥只在服务已连接时调用系统自动化接口。
  *
- * 服务本身不认识执行状态，收到组合键就调 [onVolumeUpDownPressed]，由
- * [com.azurpilot.ghio.overlay.OverlayController] 决定做什么
- *
- * Exists for exactly one thing: raising the control panel when volume up and
- * down are pressed together in foreground mode.
- *
- * Foreground mode hands the screen to the target app; without this shortcut
- * the floating ball is the only way in, and it blocks the picture. It reads no
- * window content (`canRetrieveWindowContent=false`) and filters keys only.
- *
- * The service itself knows nothing about execution state; on the combo it
- * invokes [onVolumeUpDownPressed] and
- * [com.azurpilot.ghio.overlay.OverlayController] decides what to do.
+ * Supports the volume-key shortcut and provides screenshots, gestures, and the foreground
+ * window's package to the primary-display bridge. The main thread owns service lifecycle
+ * and callbacks; the bridge only calls the automation APIs while the service is connected.
  */
 class AccessibilityHelperService : AccessibilityService() {
 
@@ -50,6 +39,7 @@ class AccessibilityHelperService : AccessibilityService() {
     /** 连上即报给保活管理器并置位 [isConnected] / Reports to the keep-alive manager and sets [isConnected] on connect. */
     override fun onServiceConnected() {
         super.onServiceConnected()
+        connectedService = this
         _isConnected.value = true
         Timber.d("Accessibility service connected")
         KeepAliveManager.getInstance()?.onAccessibilityConnected()
@@ -127,8 +117,20 @@ class AccessibilityHelperService : AccessibilityService() {
     /**
      * 断开即清 [isConnected] 并通知保活管理器 / Clears [isConnected] and notifies the keep-alive manager on disconnect.
      */
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        disconnect()
+        return super.onUnbind(intent)
+    }
+
+    /** 清理异常销毁的连接。 / Clears the connection on unexpected destruction. */
     override fun onDestroy() {
+        disconnect()
         super.onDestroy()
+    }
+
+    private fun disconnect() {
+        if (connectedService !== this) return
+        connectedService = null
         _isConnected.value = false
         Timber.d("Accessibility service disconnected")
         KeepAliveManager.getInstance()?.onAccessibilityDisconnected()
@@ -173,6 +175,11 @@ class AccessibilityHelperService : AccessibilityService() {
         val onVolumeUpDownPressed = AtomicReference<(() -> Unit)?>()
 
         private val _isConnected = MutableStateFlow(false)
+
+        /** 当前已连接的系统服务，可跨线程读取。 / The connected system service, readable across threads. */
+        @Volatile
+        internal var connectedService: AccessibilityHelperService? = null
+            private set
 
         /**
          * 代授之后要等它变 true 才算真连上，系统绑定是异步的

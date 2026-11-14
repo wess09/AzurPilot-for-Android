@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.azurpilot.ghio.R
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.proot.AzurPilotRunState
 import com.azurpilot.ghio.service.HostSnapshot
 import com.azurpilot.ghio.theme.AppTokens
@@ -137,19 +138,18 @@ fun OverlayPanel(
                         modifier = Modifier.padding(start = AppTokens.Spacing.xs),
                     )
                 }
-                Button(
-                    onClick = if (snapshot.environmentUp) onStop else onStart,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(
-                        stringResource(
-                            if (snapshot.environmentUp) {
-                                R.string.overlay_host_stop
-                            } else {
-                                R.string.overlay_host_start
-                            }
+                if (snapshot.runMode == RunMode.BACKGROUND) {
+                    Button(
+                        onClick = if (snapshot.environmentUp) onStop else onStart,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            stringResource(
+                                if (snapshot.environmentUp) R.string.overlay_host_stop
+                                else R.string.overlay_host_start
+                            )
                         )
-                    )
+                    }
                 }
             }
         }

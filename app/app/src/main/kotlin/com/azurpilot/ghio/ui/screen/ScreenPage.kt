@@ -42,8 +42,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.azurpilot.ghio.R
 import com.azurpilot.ghio.constant.DefaultDisplayConfig
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.proot.AzurPilotRunController
 import com.azurpilot.ghio.service.HostState
+import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.ui.components.ExpressiveLoadingIndicator
 import com.azurpilot.ghio.ui.components.ToolSlotColumn
@@ -138,7 +140,19 @@ fun ScreenPage(
     modifier: Modifier = Modifier,
     hostState: HostState = koinInject(),
     runController: AzurPilotRunController = koinInject(),
+    settings: AppSettingsManager = koinInject(),
 ) {
+    val mode by settings.runMode.collectAsStateWithLifecycle()
+    if (mode == RunMode.FOREGROUND) {
+        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                stringResource(R.string.primary_screen_message),
+                modifier = Modifier.padding(AppTokens.Spacing.lg),
+                textAlign = TextAlign.Center,
+            )
+        }
+        return
+    }
     val run by runController.state.collectAsStateWithLifecycle()
 
     var surfaceReady by remember { mutableStateOf(false) }

@@ -50,7 +50,7 @@ import com.azurpilot.ghio.proot.AzurPilotTask
 import com.azurpilot.ghio.proot.AzurPilotTaskState
 import com.azurpilot.ghio.proot.ProotHost
 import com.azurpilot.ghio.proot.ProotPhase
-import com.azurpilot.ghio.service.HostEnvironmentIssue
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.service.HostSnapshot
 import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.theme.AzurPilotTheme
@@ -117,18 +117,16 @@ fun AzurPilotControlPanel(
         // 状态行与自启开关装同一张卡：它们答的是同一个问题「这台机器现在什么状态」。
         // 散在背景上就只是几行浮字，读的人分不出哪里是一组
         AppCard {
-            AzurPilotStatusRow(
-                level = if (snapshot.privilegedConnected) StatusLevel.Ok else StatusLevel.Error,
-                labelRes = R.string.overlay_host_privileged,
-                value =
-                    stringResource(
-                        if (snapshot.privilegedConnected) {
-                            R.string.host_state_connected
-                        } else {
-                            R.string.host_state_disconnected
-                        }
+            if (snapshot.runMode == RunMode.BACKGROUND) {
+                AzurPilotStatusRow(
+                    level = if (snapshot.privilegedConnected) StatusLevel.Ok else StatusLevel.Error,
+                    labelRes = R.string.overlay_host_privileged,
+                    value = stringResource(
+                        if (snapshot.privilegedConnected) R.string.host_state_connected
+                        else R.string.host_state_disconnected
                     ),
-            )
+                )
+            }
             AzurPilotStatusRow(
                 level = if (snapshot.bridgeReachable) StatusLevel.Ok else StatusLevel.Error,
                 labelRes = R.string.overlay_host_bridge,
@@ -143,30 +141,23 @@ fun AzurPilotControlPanel(
             )
             AzurPilotStatusRow(
                 level =
-                    if (snapshot.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE) {
+                    if (snapshot.environmentUp) {
                         StatusLevel.Ok
                     } else {
                         StatusLevel.Inactive
                     },
                 labelRes = R.string.overlay_host_display,
                 value =
-                    if (snapshot.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE) {
-                        "#${snapshot.vdDisplayId}"
-                    } else {
-                        stringResource(R.string.host_state_display_none)
+                    when {
+                        snapshot.runMode == RunMode.FOREGROUND ->
+                            stringResource(R.string.settings_run_mode_primary)
+                        snapshot.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE -> "#${snapshot.vdDisplayId}"
+                        else -> stringResource(R.string.host_state_display_none)
                     },
             )
             snapshot.environmentIssue?.let { issue ->
                 Text(
-                    text =
-                        stringResource(
-                            when (issue) {
-                                HostEnvironmentIssue.ROOT_BACKEND_REQUIRED ->
-                                    R.string.host_shizuku_root_uid_error
-                                HostEnvironmentIssue.ROOT_FALLBACK_FAILED ->
-                                    R.string.host_root_fallback_failed
-                            }
-                        ),
+                    text = stringResource(issue.messageRes),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.fillMaxWidth(),

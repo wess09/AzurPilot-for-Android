@@ -47,6 +47,7 @@ import com.azurpilot.ghio.R
 import com.azurpilot.ghio.auth.AppLockManager
 import com.azurpilot.ghio.constant.ProjectLinks
 import com.azurpilot.ghio.domain.RemoteBackend
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.domain.ThemeMode
 import com.azurpilot.ghio.log.LogExportKind
 import com.azurpilot.ghio.privileged.PermissionManager
@@ -136,6 +137,7 @@ fun AppRoot(
 ) {
     val settingsState by settingsViewModel.uiState.collectAsStateWithLifecycle()
     val readiness by permissionManager.readiness.collectAsStateWithLifecycle()
+    val runMode by appSettings.runMode.collectAsStateWithLifecycle()
     val isGranting by permissionManager.isGranting.collectAsStateWithLifecycle()
     val settingsLoaded by appSettings.loaded.collectAsStateWithLifecycle()
     val oobeCompleted by appSettings.oobeCompleted.collectAsStateWithLifecycle()
@@ -501,9 +503,10 @@ fun AppRoot(
                 )
             LaunchedEffect(pagerState.settledPage) { selectedPage = pagerState.settledPage }
             // 方向归主导航管理，画面页被 pager 回收后也必须恢复系统策略。
-            LaunchedEffect(activity, selectedPage, onSubPage) {
+            LaunchedEffect(activity, selectedPage, onSubPage, runMode) {
                 activity?.requestedOrientation =
-                    if (!onSubPage && selectedPage == TopDestination.Screen.ordinal)
+                    if (!onSubPage && selectedPage == TopDestination.Screen.ordinal &&
+                        runMode == RunMode.BACKGROUND)
                         android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
@@ -664,7 +667,9 @@ fun AppRoot(
             }
 
             // 内置启动或外部授权未就绪时显示引导（仅在完成 OOBE 且非预览模式下）。
-            if (!isAppLocked && localRuntimeEnabled && !showProvision && !oobeVisible) {
+            if (runMode == RunMode.BACKGROUND && !isAppLocked &&
+                localRuntimeEnabled && !showProvision && !oobeVisible
+            ) {
                 ShizukuReadinessDialog(
                     readiness = readiness,
                     onOpenApp = { permissionManager.openShizuku(context) },
@@ -723,6 +728,7 @@ fun AppRoot(
                                                     page == pagerState.settledPage && !onSubPage,
                                                 bottomInnerPadding = bottomInnerPadding,
                                                 onOpenSettings = { navigator.push(AppRoute.Settings) },
+                                                onOpenScreenSettings = { navigator.push(AppRoute.VirtualDisplay) },
                                                 onSettingsAnchorChanged = { settingsAnchor = it },
                                                 onOpenTasks = { goToPage(TopDestination.AzurPilot.ordinal) },
                                                 onOpenRemote = ::openRemote,

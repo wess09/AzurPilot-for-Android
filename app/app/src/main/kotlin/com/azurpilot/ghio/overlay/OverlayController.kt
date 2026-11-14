@@ -14,6 +14,7 @@ import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.azurpilot.ghio.MainActivity
 import com.azurpilot.ghio.domain.OverlayControlMode
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.overlay.border.BorderOverlayManager
 import com.azurpilot.ghio.proot.AzurPilotRunController
 import com.azurpilot.ghio.service.AccessibilityHelperService
@@ -34,13 +35,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import timber.log.Timber
 
 /**
  * 外壳控制层：悬浮球/面板是环境状态的开关与仪表盘
  *
- * 观察 [HostState]：环境起来（虚拟屏在且桥通）出控制球/边框，环境撤了收起来。
+ * 观察 [HostState]：虚拟屏环境就绪时显示控制球或边框；主屏模式收起所有悬浮控件，
+ * 避免进入无障碍截图。
  * 球点开出面板，面板上「启动环境 = 特权连接 → setup() → startVirtualDisplay()」
  * 与「停止环境 = stopVirtualDisplay()」两个动作直接打 [HostState]
  *
@@ -50,9 +55,9 @@ import timber.log.Timber
  * The shell's control layer: the floating ball / panel are the environment
  * state's switch and dashboard.
  *
- * It observes [HostState]: when the environment is up (virtual display present
- * and bridge connected) the control ball / border shows, and they retract when
- * the environment goes away. Tapping the ball opens the panel; the panel's
+ * It observes [HostState]: a ready virtual display shows the control ball or border.
+ * Primary mode hides all floating controls so accessibility screenshots exclude them.
+ * Tapping the ball opens the panel; the panel's
  * "start environment = privileged connect → setup() → startVirtualDisplay()"
  * and "stop environment = stopVirtualDisplay()" actions hit [HostState]
  * directly.
@@ -79,7 +84,6 @@ class OverlayController(
     /** 面板是否锁定拖动；锁定即 ClickOnly，防误触移动 / Whether the panel is locked against dragging; locked means ClickOnly to fend off accidental moves. */
     private val isPanelLocked = MutableStateFlow(true)
 
-    private var currentMode: OverlayControlMode = OverlayControlMode.FLOAT_BALL
     private var hostJob: Job? = null
     private var panelLayout: Pair<Int, Int>? = null
 
@@ -102,45 +106,44 @@ class OverlayController(
      * and the summon mode; idempotent, safe to call repeatedly.
      */
     fun setup() {
+        if (hostJob != null) return
         context.registerComponentCallbacks(configCallback)
         install()
         configCallback.onConfigurationChanged(context.resources.configuration)
-        observeHost()
-        scope.launch {
-            appSettings.overlayControlMode.collect { applyMode(it) }
-        }
-    }
-
-    private fun observeHost() {
-        if (hostJob != null) return
         hostJob = scope.launch {
-            var wasUp = hostState.snapshot.value.environmentUp
-            hostState.snapshot.collect { snapshot ->
-                val up = snapshot.environmentUp
-                if (up == wasUp) return@collect
-                wasUp = up
-                // 面板在屏时球不复活：球只是面板的入口，入口开着就不需要第二个入口
-                if (up) {
-                    if (FloatingX.controlOrNull(PANEL_TAG)?.isShow() != true) showControl()
-                } else {
-                    hideControl()
+            combine(
+                hostState.snapshot.map { it.runMode == RunMode.BACKGROUND && it.environmentUp }
+                    .distinctUntilChanged(),
+                appSettings.runMode,
+                appSettings.overlayControlMode,
+                ::Triple,
+            ).collect { (_, runMode, summonMode) ->
+                if (runMode == RunMode.FOREGROUND) hidePanel()
+                when {
+                    !canShowControls() -> {
+                        unregisterVolumeKeyListener()
+                        hideBall()
+                        borderOverlayManager.hide()
+                    }
+                    summonMode == OverlayControlMode.ACCESSIBILITY -> {
+                        hideBall()
+                        registerVolumeKeyListener()
+                        borderOverlayManager.show()
+                    }
+                    else -> {
+                        unregisterVolumeKeyListener()
+                        borderOverlayManager.hide()
+                        if (FloatingX.controlOrNull(PANEL_TAG)?.isShow() != true) showBall()
+                    }
                 }
             }
         }
     }
 
-    /** 按当前呼出模式亮出常驻元素（球或边框）/ Shows the resident element (ball or border) for the current summon mode. */
-    private suspend fun showControl() {
-        when (currentMode) {
-            OverlayControlMode.FLOAT_BALL -> showBall()
-            OverlayControlMode.ACCESSIBILITY -> borderOverlayManager.show()
-        }
-    }
-
-    /** 两种常驻元素一并收起，呼出模式切换时避免短暂并存 / Retracts both resident elements together, so a mode switch never shows them side by side. */
-    private suspend fun hideControl() {
-        hideBall()
-        borderOverlayManager.hide()
+    private fun canShowControls(): Boolean {
+        val host = hostState.snapshot.value
+        return appSettings.runMode.value == RunMode.BACKGROUND &&
+            host.runMode == RunMode.BACKGROUND && host.environmentUp
     }
 
     private fun install() {
@@ -253,11 +256,7 @@ class OverlayController(
 
     private fun onPanelClosed() {
         hidePanel()
-        if (currentMode == OverlayControlMode.FLOAT_BALL &&
-            hostState.snapshot.value.environmentUp
-        ) {
-            showBall()
-        }
+        if (appSettings.overlayControlMode.value == OverlayControlMode.FLOAT_BALL) showBall()
     }
 
     /** 把外壳 App 拉回前台；启动失败只记日志，不打断悬浮窗交互 / Brings the shell app back to the front; a failed start is only logged, never breaking the overlay interaction. */
@@ -277,58 +276,26 @@ class OverlayController(
     }
 
     private fun showPanel() {
+        if (!canShowControls()) return
         viewModelOwner.start()
         FloatingX.controlOrNull(PANEL_TAG)?.show()
     }
 
     private fun hidePanel() {
-        FloatingX.controlOrNull(PANEL_TAG)?.hide()
+        val panel = FloatingX.controlOrNull(PANEL_TAG) ?: return
+        if (!panel.isShow()) return
+        panel.hide()
         viewModelOwner.stop()
     }
 
-    private fun showBall() = FloatingX.controlOrNull(BALL_TAG)?.show()
+    private fun showBall() {
+        if (canShowControls()) FloatingX.controlOrNull(BALL_TAG)?.show()
+    }
 
     private fun hideBall() = FloatingX.controlOrNull(BALL_TAG)?.hide()
 
     private fun togglePanel() {
         if (FloatingX.controlOrNull(PANEL_TAG)?.isShow() == true) hidePanel() else showPanel()
-    }
-
-    /**
-     * 切换呼出模式：先收旧常驻元素再上新的，环境未起时只登记不展示
-     *
-     * 无障碍模式额外挂/卸音量双键监听；监听由无障碍服务转发，模式切走必须摘掉，
-     * 否则服务还在往已不存在的模式派发
-     *
-     * Switches the summon mode: the old resident element retracts first, then
-     * the new one shows; with the environment down it only records the mode
-     * without showing anything.
-     *
-     * The accessibility mode additionally attaches / detaches the volume
-     * double-key listener; the service forwards the gesture, so the listener
-     * must be removed when the mode switches away, otherwise the service keeps
-     * dispatching into a mode that no longer exists.
-     */
-    private suspend fun applyMode(mode: OverlayControlMode) {
-        if (currentMode == mode) return
-        Timber.d("Control overlay mode $currentMode -> $mode")
-        when (currentMode) {
-            OverlayControlMode.ACCESSIBILITY -> borderOverlayManager.hide()
-            OverlayControlMode.FLOAT_BALL -> hideBall()
-        }
-        currentMode = mode
-        if (!hostState.snapshot.value.environmentUp) return
-        when (mode) {
-            OverlayControlMode.ACCESSIBILITY -> {
-                registerVolumeKeyListener()
-                borderOverlayManager.show()
-            }
-
-            OverlayControlMode.FLOAT_BALL -> {
-                unregisterVolumeKeyListener()
-                showBall()
-            }
-        }
     }
 
     /** 注册音量 ± 同按监听（由无障碍服务转发），触发面板开关 / Registers the Volume +/- combo listener (forwarded by the accessibility service) to toggle the panel. */
@@ -384,7 +351,7 @@ class OverlayController(
         )
         // 尺寸变了必须换视图：FloatingX 不会因为 layoutParams 改了就重新测量已挂载的那份
         control.updateView(createPanelView())
-        if (wasShowing) control.show()
+        if (wasShowing && appSettings.runMode.value == RunMode.BACKGROUND) control.show()
     }
 
     private companion object {

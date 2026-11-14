@@ -1,5 +1,10 @@
 package com.azurpilot.ghio.proot
 
+import android.content.Context
+import com.azurpilot.ghio.R
+import com.azurpilot.ghio.domain.RunMode
+import com.azurpilot.ghio.service.HostState
+
 import android.graphics.BitmapFactory
 import android.util.Base64
 import com.azurpilot.ghio.AppDispatchers
@@ -52,6 +57,8 @@ class AzurPilotRepository(
     private val gateway: AzurPilotGateway,
     private val store: AzurPilotPreferenceStore,
     private val settings: AppSettingsManager,
+    private val context: Context,
+    private val hostState: HostState,
 ) {
 
     private val _connected = MutableStateFlow(false)
@@ -611,15 +618,21 @@ class AzurPilotRepository(
         if (_schedulerBusy.value) return
         _schedulerBusy.value = true
         scope.launch(AppDispatchers.IO) {
-            // 启动前等编辑队列落盘：调度器读的是磁盘上的配置，手上没保存的改动会白改
-            if (running) configEditor.settle()
-            val method = if (running) "scheduler.start" else "scheduler.stop"
-            when (val reply = gateway.call(method, JSONObject().put("instance", instance))) {
-                is AzurPilotGateway.Reply.Ok -> applyOverview(reply.obj)
-                is AzurPilotGateway.Reply.Err -> report(reply.message)
-                AzurPilotGateway.Reply.Offline -> Unit
+            try {
+                if (running) {
+                    // 调度器读磁盘配置，先等待编辑队列落盘。
+                    configEditor.settle()
+                    if (!ensureLocalDevice()) return@launch
+                }
+                val method = if (running) "scheduler.start" else "scheduler.stop"
+                when (val reply = gateway.call(method, JSONObject().put("instance", instance))) {
+                    is AzurPilotGateway.Reply.Ok -> applyOverview(reply.obj)
+                    is AzurPilotGateway.Reply.Err -> report(reply.message)
+                    AzurPilotGateway.Reply.Offline -> Unit
+                }
+            } finally {
+                _schedulerBusy.value = false
             }
-            _schedulerBusy.value = false
         }
     }
 
@@ -627,6 +640,7 @@ class AzurPilotRepository(
     fun runTask(task: String) {
         val instance = _selectedInstance.value ?: return
         scope.launch(AppDispatchers.IO) {
+            if (!ensureLocalDevice()) return@launch
             val params = JSONObject().put("instance", instance).put("task", task)
             when (val reply = gateway.call("tasks.run", params)) {
                 is AzurPilotGateway.Reply.Ok -> applyOverview(reply.obj)
@@ -634,6 +648,16 @@ class AzurPilotRepository(
                 AzurPilotGateway.Reply.Offline -> Unit
             }
         }
+    }
+
+    private suspend fun ensureLocalDevice(): Boolean {
+        if (sourceId.value != "local" || settings.remoteClientMode.value) return true
+        // 这里在 IO 调度器；特权授权由使用主线程的主页启动入口处理。
+        if (settings.runMode.value != RunMode.FOREGROUND) return true
+        if (hostState.ensureEnvironmentStarted()) return true
+        report(context.getString(hostState.snapshot.value.environmentIssue?.messageRes
+            ?: R.string.primary_bridge_unavailable))
+        return false
     }
 
     /**

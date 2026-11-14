@@ -3,11 +3,14 @@ package com.azurpilot.ghio.service
 import android.content.Context
 import android.os.Build
 import android.view.Surface
+import androidx.annotation.StringRes
 import com.azurpilot.ghio.RemoteService
 import com.azurpilot.ghio.BuildConfig
 import com.azurpilot.ghio.AppDispatchers
+import com.azurpilot.ghio.R
 import com.azurpilot.ghio.constant.DefaultDisplayConfig
 import com.azurpilot.ghio.domain.RemoteBackend
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.privileged.PrivilegedServicePort
 import com.azurpilot.ghio.privileged.PrivilegedServiceState
@@ -18,6 +21,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -25,6 +29,7 @@ import kotlinx.coroutines.yield
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import timber.log.Timber
 import java.io.BufferedInputStream
@@ -35,33 +40,18 @@ import java.net.Socket
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * 外壳真实状态的唯一来源：特权进程连接态 + 桥可达性 + 虚拟屏 displayId
+ * 汇总设备模式、权限连接与截图通道状态；主屏不依赖特权进程。
  *
- * 桥活在特权进程里（BridgeServer 随 RemoteServiceImpl 自起），app 侧够不到它的
- * isRunning()，可达性只能自己周期 ping——协议与 m0 桥同款（行分隔 JSON），
- * 与 AzurPilot 客户端打的是同一个端口
- *
- * displayId 只是「最近一次 startVirtualDisplay 的返回值」：特权进程一断，
- * 屏与桥随之作废，快照整份清零，等下次连接/探测重建
- *
- * The single source of the shell's real state: privileged-process connectivity,
- * bridge reachability and the virtual display's displayId.
- *
- * The bridge lives inside the privileged process (BridgeServer starts with
- * RemoteServiceImpl), so the app side cannot reach its isRunning() —
- * reachability can only come from periodic pings. The protocol matches the m0
- * bridge (newline-delimited JSON), on the same port the AzurPilot client hits.
- *
- * displayId is merely "the most recent startVirtualDisplay return value": once
- * the privileged process drops, display and bridge are void, the snapshot
- * zeroes wholesale, and the next connect/probe rebuilds it.
+ * Aggregates device mode, permission connectivity, and capture transport state. The primary
+ * display does not depend on the privileged process.
  */
-class HostState(
+class HostState internal constructor(
     private val context: Context,
     private val servicePort: PrivilegedServicePort,
     private val permissionGateway: PermissionGateway,
     private val scope: CoroutineScope,
     private val appSettings: AppSettingsManager,
+    private val primaryBridge: PrimaryDisplayBridge,
 ) {
 
     private val _snapshot = MutableStateFlow(HostSnapshot())
@@ -87,13 +77,23 @@ class HostState(
         scope.launch {
             servicePort.serviceState.collect { state ->
                 _snapshot.update {
-                    if (state == PrivilegedServiceState.Connected) {
-                        it.copy(privilegedConnected = true)
-                    } else {
-                        HostSnapshot(environmentIssue = it.environmentIssue)
-                    }
+                    val connected = state == PrivilegedServiceState.Connected
+                    it.copy(
+                        privilegedConnected = connected,
+                        vdDisplayId = if (connected) it.vdDisplayId else DefaultDisplayConfig.DISPLAY_NONE,
+                        bridgeReachable = if (connected || it.runMode == RunMode.FOREGROUND) {
+                            it.bridgeReachable
+                        } else false,
+                    )
                 }
             }
+        }
+        scope.launch(AppDispatchers.IO) {
+            combine(appSettings.runMode, AccessibilityHelperService.isConnected, ::Pair)
+                .collect {
+                    envMutex.withLock { syncMode(appSettings.runMode.value) }
+                    probeBridgeNow()
+                }
         }
         scope.launch(AppDispatchers.IO) {
             while (true) {
@@ -110,81 +110,103 @@ class HostState(
      *
      * @return 桥是否可达 / whether the bridge is reachable
      */
-    suspend fun probeBridgeNow(): Boolean = probeMutex.withLock {
-        val reachable = runCatching { pingBridge() }
-            .onFailure { Timber.d("bridge probe failed: %s", it.message) }
-            .getOrDefault(false)
-        _snapshot.update { it.copy(bridgeReachable = reachable) }
-        reachable
+    suspend fun probeBridgeNow(): Boolean = withContext(AppDispatchers.IO) {
+        probeMutex.withLock {
+            primaryBridge.start()
+            val mode = _snapshot.value.runMode
+            val primary = mode == RunMode.FOREGROUND
+            val issue = if (primary) primaryDisplayIssue() else null
+            val reachable = if (primary) issue == null else runCatching { pingBridge() }
+                .onFailure { Timber.d("bridge probe failed: %s", it.message) }
+                .getOrDefault(false)
+            _snapshot.update {
+                if (it.runMode != mode) it else it.copy(
+                    bridgeReachable = reachable,
+                    environmentIssue = if (primary) issue else it.environmentIssue,
+                )
+            }
+            reachable
+        }
     }
 
     /**
-     * 「开始」链路：确保特权连接就绪 → setup() → startVirtualDisplay()
-     * 桥随特权进程自起，无需显式操作
+     * 检查主屏是否可用，或按需建立特权连接与虚拟屏。启动调度器或工具前调用。
      *
-     * 幂等：屏已存在直接成功；断线重连后（快照已清零）可再次触发
-     *
-     * The "start" chain: ensure the privileged connection, setup(), then
-     * startVirtualDisplay(). The bridge comes up with the privileged process —
-     * no explicit step needed.
-     *
-     * Idempotent: an existing display succeeds at once; after a reconnect (the
-     * snapshot zeroed) it can fire again.
-     *
-     * @return 屏是否建起（或本来就在）/ whether the display came up (or was
-     *   already there)
+     * Checks primary-display readiness or starts the privileged connection and virtual display
+     * as needed. Call before starting the scheduler or a tool.
      */
     suspend fun ensureEnvironmentStarted(): Boolean {
-        envMutex.withLock {
-            if (_snapshot.value.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE) return@withLock
-            val service = servicePort.serviceOrNull() ?: run {
-                // 用户可能关闭过首启引导。启动环境必须走统一权限入口，未授权时
-                // 直接弹出 Shizuku 授权，不能只 bind 后静默落成 Error。
-                when (val result = permissionGateway.bindService()) {
-                    ServiceBindResult.AlreadyConnected,
-                    ServiceBindResult.Started -> Unit
-                    else -> {
-                        Timber.w("ensureEnvironmentStarted: privileged bind rejected: %s", result)
-                        return@withLock
-                    }
-                }
-                runCatching {
-                    withTimeout(CONNECT_WAIT_MS) {
-                        servicePort.serviceState.first { it != PrivilegedServiceState.Connecting }
-                    }
-                }
-                servicePort.serviceOrNull() ?: run {
-                    Timber.w("ensureEnvironmentStarted: privileged not connected")
-                    return@withLock
-                }
-            }
-            runCatching { service.setup(null, null, BuildConfig.DEBUG) }
-                .onFailure { Timber.w(it, "setup failed") }
-            appSettings.loaded.first { it }
-            var displayId = startDisplay(service)
-            // Cloud ROMs sometimes run the Shizuku remote service as uid=0.
-            // DisplayManagerService rejects com.android.shell for that UID.
-            // Retry using the already-authorized Root launcher, which runs as
-            // shell (uid=2000) on affected Android 13 devices (issue #11).
-            if (displayId == DefaultDisplayConfig.DISPLAY_NONE &&
-                !rootFallbackAttempted &&
-                servicePort.currentBackend == RemoteBackend.SHIZUKU &&
-                runCatching { service.processUid() }.getOrNull() == 0
-            ) {
-                rootFallbackAttempted = true
-                displayId = retryRootBackendForRootShizuku()
-            }
-            if (displayId == DefaultDisplayConfig.DISPLAY_NONE) {
-                Timber.w("startVirtualDisplay returned DISPLAY_NONE")
-                return@withLock
-            }
-            Timber.i("Environment started, displayId=%s", displayId)
-            _snapshot.update { it.copy(vdDisplayId = displayId, environmentIssue = null) }
-            RunForegroundService.start(context)
+        appSettings.loaded.first { it }
+        val mode = envMutex.withLock {
+            val selected = appSettings.runMode.value
+            syncMode(selected)
+            if (selected == RunMode.BACKGROUND) ensureVirtualDisplay()
+            selected
         }
-        // 建完屏（或本来就有屏）顺手刷一次桥态，UI 不必干等下个探测周期
         probeBridgeNow()
-        return _snapshot.value.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE
+        val current = _snapshot.value
+        return current.runMode == mode && when (mode) {
+            RunMode.FOREGROUND -> current.environmentUp
+            RunMode.BACKGROUND -> current.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE
+        }
+    }
+
+    private suspend fun ensureVirtualDisplay() {
+        if (_snapshot.value.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE) return
+        val service = servicePort.serviceOrNull() ?: run {
+            // 用户可能关闭过首启引导；通过统一入口，未授权时仍能弹出 Shizuku 授权。
+            when (val result = permissionGateway.bindService()) {
+                ServiceBindResult.AlreadyConnected,
+                ServiceBindResult.Started -> Unit
+                else -> {
+                    Timber.w("ensureEnvironmentStarted: privileged bind rejected: %s", result)
+                    return
+                }
+            }
+            runCatching {
+                withTimeout(CONNECT_WAIT_MS) {
+                    servicePort.serviceState.first { it != PrivilegedServiceState.Connecting }
+                }
+            }
+            servicePort.serviceOrNull() ?: run {
+                Timber.w("ensureEnvironmentStarted: privileged not connected")
+                return
+            }
+        }
+        runCatching { service.setup(null, null, BuildConfig.DEBUG) }
+            .onFailure { Timber.w(it, "setup failed") }
+        var displayId = startDisplay(service)
+        // 部分云 ROM 的 Shizuku 是 uid=0，无法使用 com.android.shell 建屏；已授权 Root 时可尝试恢复。
+        if (displayId == DefaultDisplayConfig.DISPLAY_NONE &&
+            !rootFallbackAttempted &&
+            servicePort.currentBackend == RemoteBackend.SHIZUKU &&
+            runCatching { service.processUid() }.getOrNull() == 0
+        ) {
+            rootFallbackAttempted = true
+            displayId = retryRootBackendForRootShizuku()
+        }
+        if (displayId == DefaultDisplayConfig.DISPLAY_NONE) {
+            Timber.w("startVirtualDisplay returned DISPLAY_NONE")
+            return
+        }
+        Timber.i("Environment started, displayId=%s", displayId)
+        _snapshot.update { it.copy(vdDisplayId = displayId, environmentIssue = null) }
+        RunForegroundService.start(context)
+    }
+
+    private fun syncMode(mode: RunMode) {
+        if (_snapshot.value.runMode == mode) return
+        if (mode == RunMode.FOREGROUND && _snapshot.value.vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE) {
+            stopVirtualDisplay()
+        }
+        _snapshot.update { it.copy(runMode = mode, bridgeReachable = false, environmentIssue = null) }
+    }
+
+    private fun primaryDisplayIssue(): HostEnvironmentIssue? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return HostEnvironmentIssue.PRIMARY_ANDROID_UNSUPPORTED
+        if (!PrimaryDisplayDevice.has720p(context)) return HostEnvironmentIssue.PRIMARY_RESOLUTION_REQUIRED
+        if (!AccessibilityHelperService.isConnected.value) return HostEnvironmentIssue.PRIMARY_ACCESSIBILITY_REQUIRED
+        return if (primaryBridge.isRunning) null else HostEnvironmentIssue.PRIMARY_BRIDGE_UNAVAILABLE
     }
 
     private fun startDisplay(service: RemoteService): Int = runCatching {
@@ -271,12 +293,14 @@ class HostState(
      */
     suspend fun stopEnvironment() {
         envMutex.withLock {
-            servicePort.serviceOrNull()?.let { service ->
-                runCatching { service.stopVirtualDisplay() }
-                    .onFailure { Timber.w(it, "stopVirtualDisplay failed") }
-            }
-            _snapshot.update { it.copy(vdDisplayId = DefaultDisplayConfig.DISPLAY_NONE) }
+            if (_snapshot.value.runMode == RunMode.BACKGROUND) stopVirtualDisplay()
         }
+    }
+
+    private fun stopVirtualDisplay() {
+        runCatching { servicePort.serviceOrNull()?.stopVirtualDisplay() }
+            .onFailure { Timber.w(it, "stopVirtualDisplay failed") }
+        _snapshot.update { it.copy(vdDisplayId = DefaultDisplayConfig.DISPLAY_NONE) }
     }
 
     /**
@@ -409,6 +433,7 @@ data class HostSnapshot(
     val bridgeReachable: Boolean = false,
     val vdDisplayId: Int = DefaultDisplayConfig.DISPLAY_NONE,
     val environmentIssue: HostEnvironmentIssue? = null,
+    val runMode: RunMode = RunMode.BACKGROUND,
 ) {
     /**
      * 环境整体活着：屏在且桥通；悬浮球与 FGS 的「活着」判据
@@ -417,11 +442,20 @@ data class HostSnapshot(
      * reachable — the "alive" criterion for the floating ball and the FGS.
      */
     val environmentUp: Boolean
-        get() = bridgeReachable && vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE
+        get() = bridgeReachable &&
+            (runMode == RunMode.FOREGROUND || vdDisplayId != DefaultDisplayConfig.DISPLAY_NONE)
 }
 
-/** Actionable virtual-display failure exposed to the status panel. */
-enum class HostEnvironmentIssue {
-    ROOT_BACKEND_REQUIRED,
-    ROOT_FALLBACK_FAILED,
+/**
+ * 提供可在设备状态面板展示的启动问题。
+ *
+ * Provides startup problems suitable for display in the device status panel.
+ */
+enum class HostEnvironmentIssue(@param:StringRes val messageRes: Int) {
+    ROOT_BACKEND_REQUIRED(R.string.host_shizuku_root_uid_error),
+    ROOT_FALLBACK_FAILED(R.string.host_root_fallback_failed),
+    PRIMARY_ANDROID_UNSUPPORTED(R.string.primary_android_unsupported),
+    PRIMARY_RESOLUTION_REQUIRED(R.string.primary_resolution_required),
+    PRIMARY_ACCESSIBILITY_REQUIRED(R.string.primary_accessibility_required),
+    PRIMARY_BRIDGE_UNAVAILABLE(R.string.primary_bridge_unavailable),
 }

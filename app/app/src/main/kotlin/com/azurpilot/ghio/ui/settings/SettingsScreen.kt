@@ -2,6 +2,7 @@ package com.azurpilot.ghio.ui.settings
 
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
+import android.content.Intent
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
@@ -53,6 +54,7 @@ import com.azurpilot.ghio.R
 import com.azurpilot.ghio.auth.AppLockManager
 import com.azurpilot.ghio.constant.ProjectLinks
 import com.azurpilot.ghio.domain.RemoteBackend
+import com.azurpilot.ghio.domain.RunMode
 import com.azurpilot.ghio.domain.license.LicenseRepository
 import com.azurpilot.ghio.i18n.AppLocales
 import com.azurpilot.ghio.keepalive.KeepAliveManager
@@ -63,6 +65,7 @@ import com.azurpilot.ghio.proot.ProotHost
 import com.azurpilot.ghio.proot.ProotPhase
 import com.azurpilot.ghio.provision.RootfsProvisioner
 import com.azurpilot.ghio.service.AccessibilityHelperService
+import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.settings.SettingsIntent
 import com.azurpilot.ghio.settings.SettingsUiState
@@ -444,6 +447,9 @@ fun VirtualDisplaySettingsPage(
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
     settings: AppSettingsManager = koinInject(),
+    hostState: HostState = koinInject(),
+    runController: AzurPilotRunController = koinInject(),
+    repository: AzurPilotRepository = koinInject(),
 ) {
     val context = LocalContext.current
     val displays = remember(context) { context.getSystemService(DisplayManager::class.java) }
@@ -472,6 +478,11 @@ fun VirtualDisplaySettingsPage(
     val savedRate by settings.virtualDisplayRefreshRate.collectAsStateWithLifecycle()
     val savedDpi by settings.virtualDisplayDpi.collectAsStateWithLifecycle()
     val loaded by settings.loaded.collectAsStateWithLifecycle()
+    val mode by settings.runMode.collectAsStateWithLifecycle()
+    val host by hostState.snapshot.collectAsStateWithLifecycle()
+    val run by runController.state.collectAsStateWithLifecycle()
+    val schedulerBusy by repository.schedulerBusy.collectAsStateWithLifecycle()
+    val accessibilityConnected by AccessibilityHelperService.isConnected.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val deviceDpi = context.resources.displayMetrics.densityDpi
     var dpiDraft by remember(savedDpi) { mutableStateOf(savedDpi.toString()) }
@@ -504,6 +515,40 @@ fun VirtualDisplaySettingsPage(
         onBack = onBack,
         modifier = modifier,
     ) {
+        AppCard {
+            AppSingleChoiceFlow(
+                title = stringResource(R.string.settings_run_mode),
+                options = listOf(
+                    RunMode.BACKGROUND to stringResource(R.string.settings_run_mode_virtual),
+                    RunMode.FOREGROUND to stringResource(R.string.settings_run_mode_primary),
+                ),
+                selected = mode,
+                onSelect = { selected -> scope.launch { settings.setRunMode(selected) } },
+                enabled = loaded && !run.busy && !run.runnerAlive && !run.toolAlive && !schedulerBusy,
+                icon = Icons.Outlined.ScreenshotMonitor,
+            )
+            if (mode == RunMode.FOREGROUND) {
+                Text(
+                    stringResource(R.string.settings_run_mode_primary_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (host.runMode == mode) host.environmentIssue?.let {
+                    Text(
+                        stringResource(it.messageRes),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                if (!accessibilityConnected && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
+                        Text(stringResource(R.string.primary_open_accessibility))
+                    }
+                }
+            }
+        }
+        if (mode == RunMode.FOREGROUND) return@SettingsSubPage
+
         AppCard {
             AppInfoRow(
                 stringResource(R.string.settings_virtual_display_resolution),

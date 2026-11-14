@@ -39,5 +39,5 @@ val prootModule = module {
     single { com.azurpilot.ghio.remoteaccess.RemotePairings(androidContext()) }
     single { AzurPilotGateway(get(named<AppCoroutineScope>()), get()) }
     single<AzurPilotPreferenceStore> { AzurPilotPreferences(androidContext()) }
-    single { AzurPilotRepository(get(named<AppCoroutineScope>()), get(), get(), get()) }
+    single { AzurPilotRepository(get(named<AppCoroutineScope>()), get(), get(), get(), androidContext(), get()) }
 }

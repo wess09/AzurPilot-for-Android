@@ -359,6 +359,7 @@ class ProotHost(
         "AZURPILOT_ROOT" to GUEST_INSTALL_ROOT,
         "AZURPILOT_ANDROID" to "1",
         "AZURPILOT_ANDROID_TOKEN" to AndroidControlAuth.get(app),
+        "AZURPILOT_PRIMARY_SOCKET" to com.azurpilot.ghio.service.PrimaryDisplayBridge.SOCKET_NAME,
         "AZURPILOT_OCR_ADDRESS" to ocrServer.address,
         "PYTHONPATH" to GUEST_INSTALL_ROOT,
         // 旧运行时仍从 Release 获取前端；新运行时使用相同镜像前缀获取 Git 源码。
@@ -551,7 +552,11 @@ class ProotHost(
      * asset, say) only logs and keeps the rootfs's existing copy.
      */
     private fun syncHostOverlay() {
-        listOf(HOST_OVERLAY_NAME, "sitecustomize.py", "android_ocr.py", "android_equipment.py", "android_device.py", "android_app_launch.py", "android_capture.py", "android_ntp.py", "android_update.py").forEach { name ->
+        listOf(
+            HOST_OVERLAY_NAME, "sitecustomize.py", "android_ocr.py", "android_equipment.py",
+            "android_device.py", "android_app_launch.py", "android_primary_display.py", "android_capture.py",
+            "android_ntp.py", "android_update.py",
+        ).forEach { name ->
             runCatching {
                 val target = File(installDir, name)
                 val tmp = File(installDir, "$name.tmp")

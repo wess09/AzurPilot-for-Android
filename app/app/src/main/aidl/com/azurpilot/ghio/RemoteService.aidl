@@ -86,10 +86,9 @@ interface RemoteService {
     boolean setup(String piRoot, String logDir, boolean isDebug) = 5;
 
     /**
-     * 选择主屏采集或独立虚拟屏模式；未知值返回 false。
+     * 保留旧事务编号；仅接受虚拟屏模式（2）。
      *
-     * Selects primary-display capture or standalone virtual-display mode; unknown values return
-     * false.
+     * Retains the legacy transaction ID; accepts only virtual-display mode (2).
      */
     boolean setVirtualDisplayMode(int mode) = 10;
 
