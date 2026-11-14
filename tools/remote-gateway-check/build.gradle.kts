@@ -12,12 +12,18 @@ sourceSets.main {
     kotlin.include("com/azurpilot/ghio/remoteaccess/ParticleCode.kt")
     kotlin.include("com/azurpilot/ghio/remoteaccess/RemoteConnections.kt")
     kotlin.include("com/azurpilot/ghio/remoteaccess/RemoteRegistryFailure.kt")
+    kotlin.include("com/azurpilot/ghio/remoteaccess/TunnelFrames.kt")
+    kotlin.include("com/azurpilot/ghio/remoteaccess/Peer2PeerConnection.kt")
+    kotlin.include("com/azurpilot/ghio/remoteaccess/Peer2PeerSignaling.kt")
+    kotlin.include("com/azurpilot/ghio/remoteaccess/LocalTunnelServer.kt")
     kotlin.include("**/GatewayEnvironment.kt", "**/RemoteEnvironment.kt", "**/DispatchEnvironment.kt", "**/LogEnvironment.kt")
 }
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("com.squareup.okhttp3:okhttp:5.2.1")
     implementation("org.json:json:20250517")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+    implementation("org.nanohttpd:nanohttpd-websocket:2.3.1")
     testImplementation(kotlin("test-junit"))
     testImplementation("com.squareup.okhttp3:mockwebserver3:5.2.1")
 }

@@ -31,12 +31,14 @@ IPv4 / IPv6 候选。从手机当前网络请求候选的 `/healthz`，确认设
 等待 Cloudflare 时继续检查新出现的直连地址，可达后立即连接，不等待隧道完成。
 旧服务返回 404/405 时兼容禁止缓存的 301 跳转，严格校验 `https://<name>.trycloudflare.com/`。
 设备离线时，浏览器入口以 302 跳到 `/error`；原生客户端提示稍后重试，重新打开会重新解析入口。
+所有 HTTP/WS 直连都失败且服务端允许 P2P 时，AFA 会静默建立 WebRTC DataChannel 直连，不使用 TURN 中继；
+P2P 再失败才回退 Cloudflare，界面和操作流程保持不变。
 
 「试用 Quick Tunnel」将本机 AP 的远程模式保存为 `cloudflare` 并提示重启；新版 Runtime 中
 `auto` 和 `cloudflare` 均先注册公网直连候选，无可达直连或客户端主动请求时才启动 Tunnel。
 AP 每十秒上报网卡公网地址与端口，服务端以随机挑战验证，后台每三分钟复检。
 私有 IPv4、CGNAT、链路本地和 ULA 不作为公网候选，不申请设备域名或证书。
-`RemoteAccessPort: 0` 默认使用 WebUI 端口 + 1（通常 25549）；`RemoteAccessPublicPort: 0`
+`RemoteAccessPort: 0` 默认复用 HTTP WebUI 端口（通常 25548），HTTPS WebUI 才另用端口 + 1；`RemoteAccessPublicPort: 0`
 默认使用监听端口。外部已有端口映射时可单独配置，AP 不修改路由器或防火墙。
 首次启用会写入 Android ID 与随机安装因子的 SHA-256 摘要作为设备 ID，设备注册密钥由 AP 保存在
 `config/remote-access.json`。原始 Android ID 不上传，已有非空设备 ID 和注册身份继续复用。
@@ -142,13 +144,15 @@ dynamic IP changes, and tunnel changes do not require pairing again.
 Direct routes are checked again while waiting for Cloudflare, so a newly reachable IP connects immediately.
 Legacy 404/405 responses retain the non-cacheable 301 path with strict `https://<name>.trycloudflare.com/` validation.
 Offline browser entries receive a 302 to `/error`. Native clients show a retry message; reopening resolves the entry again.
+When every HTTP/WS direct route fails and the server allows P2P, AFA silently opens a WebRTC DataChannel
+direct connection without TURN relaying. It falls back to Cloudflare only when P2P also fails; the UI and interaction flow remain unchanged.
 
 Try Quick Tunnel saves `cloudflare` as the local AP remote mode and requests a runtime restart.
 With the new Runtime, both `auto` and `cloudflare` register public interface IPv4/IPv6 and ports every
 ten seconds. The server verifies ownership using random challenges and checks routes every three minutes.
 Cloudflare starts when no direct route works or a client requests it. Private IPv4, CGNAT, link-local,
 and ULA addresses are excluded; device DNS names and certificates are unnecessary.
-`RemoteAccessPort: 0` uses the WebUI port plus one (normally 25549); `RemoteAccessPublicPort: 0` uses
+`RemoteAccessPort: 0` reuses HTTP WebUI (normally 25548), using port plus one only for HTTPS WebUI; `RemoteAccessPublicPort: 0` uses
 the listener port. Existing external mappings can use a separate port; AP does not change routers or firewalls.
 First use stores a SHA-256 digest of Android ID plus an installation nonce as the ID; AP persists a registration
 key in `config/remote-access.json`. The raw Android ID is not uploaded. Existing nonempty device IDs

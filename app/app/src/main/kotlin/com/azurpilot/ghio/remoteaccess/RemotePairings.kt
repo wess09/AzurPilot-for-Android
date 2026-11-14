@@ -51,7 +51,10 @@ class RemotePairings(context: Context) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS)
         .followRedirects(false).build()
-    private val connections = RemoteConnections(client)
+    private val connections = RemoteConnections(
+        client,
+        WebRtcPeer2PeerConnectionFactory(context.applicationContext, Peer2PeerSignaling(client)),
+    )
 
     /** 固定注册服务地址。 / Fixed registry service URL. */
     companion object {

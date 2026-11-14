@@ -343,6 +343,11 @@ dependencies {
 
     // AzurPilot /api/v1/ws 网关：WebSocket 富接口（实例/总览/自启/热更新）
     implementation(libs.okhttp)
+    // 远程直连失败时的 P2P 隧道；ABI 仍由 AndroidApplicationConventionPlugin 收窄
+    implementation(libs.stream.webrtc.android)
+    // 127.0.0.1 本地网关入口：把 HTTP/WS 封进 P2P DataChannel
+    implementation(libs.nanohttpd)
+    implementation(libs.nanohttpd.websocket)
     // 容器 DNS 的 DoH 主路由（#31）：热更新源/NTP 域名预解析进 /etc/hosts
     implementation(libs.okhttp.dnsoverhttps)
     implementation("androidx.camera:camera-camera2:1.5.3")

@@ -6,19 +6,25 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
- * 在 IO 调度器解析固定入口并验证客户端可达的 HTTP 地址，失败后请求 Cloudflare。
+ * 在 IO 调度器解析固定入口并验证客户端可达的 HTTP 地址，直连失败后静默尝试 P2P，再请求 Cloudflare。
  *
- * Resolves registry entries and checks HTTP reachability on the IO dispatcher,
- * requesting Cloudflare after direct candidates fail.
+ * Resolves registry entries and checks HTTP reachability on the IO dispatcher, silently trying P2P
+ * before requesting Cloudflare after direct candidates fail.
  */
-class RemoteConnections(private val client: OkHttpClient) {
+class RemoteConnections(
+    private val client: OkHttpClient,
+    private val peerConnectionFactory: Peer2PeerConnectionFactory = UnavailablePeer2PeerConnectionFactory,
+) {
     private val failed = ConcurrentHashMap<String, Long>()
+    private val p2pUrls = ConcurrentHashMap<String, String>()
+    private val activeP2p = ConcurrentHashMap<String, Peer2PeerConnection>()
     private val probeClient = client.newBuilder().connectTimeout(2, TimeUnit.SECONDS)
         .callTimeout(3, TimeUnit.SECONDS).followRedirects(false).build()
 
@@ -28,7 +34,10 @@ class RemoteConnections(private val client: OkHttpClient) {
      * Temporarily excludes a failed handshake or session so reconnect can select a fallback.
      */
     fun connectionFailed(url: String) {
-        failed[url.trimEnd('/')] = System.nanoTime()
+        val key = url.trimEnd('/')
+        val stable = p2pUrls.remove(key) ?: key
+        failed[stable] = System.nanoTime()
+        activeP2p.remove(stable)?.close()
     }
 
     /**
@@ -61,11 +70,17 @@ class RemoteConnections(private val client: OkHttpClient) {
 
     private fun excluded(url: String): Boolean {
         val key = url.trimEnd('/')
+        return excludedKey(key)
+    }
+
+    private fun excludedKey(key: String): Boolean {
         val whenFailed = failed[key] ?: return false
         if (System.nanoTime() - whenFailed < TimeUnit.SECONDS.toNanos(30)) return true
         failed.remove(key, whenFailed)
         return false
     }
+
+    private fun p2pKey(deviceId: String) = "p2p://$deviceId"
 
     private fun reachable(url: String, deviceId: String): Boolean = runCatching {
         probeClient.newCall(Request.Builder().url(url.trimEnd('/') + "/healthz").build())
@@ -84,6 +99,33 @@ class RemoteConnections(private val client: OkHttpClient) {
             if (isDirect(url) && !excluded(url) && reachable(url, deviceId)) return url.trimEnd('/') + "/"
         }
         return null
+    }
+
+    private suspend fun peerToPeer(
+        entry: String,
+        deviceId: String,
+        data: JSONObject,
+    ): String? {
+        if (!data.optBoolean("p2p")) return null
+        val key = p2pKey(deviceId)
+        if (excludedKey(key)) return null
+        var connection: Peer2PeerConnection? = null
+        return try {
+            activeP2p.remove(key)?.close()
+            connection = peerConnectionFactory.connect(entry, deviceId, data.optString("stun"))
+            val opened = requireNotNull(connection)
+            val localUrl = opened.localUrl.trimEnd('/') + "/"
+            p2pUrls[localUrl.trimEnd('/')] = key
+            activeP2p[key] = opened
+            localUrl
+        } catch (cancellation: CancellationException) {
+            connection?.close()
+            throw cancellation
+        } catch (failure: Throwable) {
+            connection?.close()
+            failed[key] = System.nanoTime()
+            null
+        }
     }
 
     /**
@@ -109,6 +151,7 @@ class RemoteConnections(private val client: OkHttpClient) {
             location.trimEnd('/') + "/"
         }
         direct(data, deviceId)?.let { return it }
+        peerToPeer(entry, deviceId, data)?.let { return it }
         val tunnel = data.optString("tunnel_url")
         if (isTunnel(tunnel) && !excluded(tunnel)) return tunnel.trimEnd('/') + "/"
         client.newCall(Request.Builder().url("$api/fallback").post(ByteArray(0).toRequestBody()).build())
@@ -118,6 +161,7 @@ class RemoteConnections(private val client: OkHttpClient) {
             delay(2000)
             val updated = read() ?: throw IOException("注册服务协议已变化")
             direct(updated, deviceId)?.let { return it }
+            peerToPeer(entry, deviceId, updated)?.let { return it }
             val next = updated.optString("tunnel_url")
             if (isTunnel(next) && !excluded(next)) return next.trimEnd('/') + "/"
         }
