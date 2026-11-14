@@ -10,6 +10,8 @@ sourceSets.main {
     kotlin.include("com/azurpilot/ghio/proot/AzurPilotResourceFlows.kt")
     kotlin.include("com/azurpilot/ghio/proot/AzurPilotValues.kt")
     kotlin.include("com/azurpilot/ghio/remoteaccess/ParticleCode.kt")
+    kotlin.include("com/azurpilot/ghio/remoteaccess/RemoteConnections.kt")
+    kotlin.include("com/azurpilot/ghio/remoteaccess/RemoteRegistryFailure.kt")
     kotlin.include("**/GatewayEnvironment.kt", "**/RemoteEnvironment.kt", "**/DispatchEnvironment.kt", "**/LogEnvironment.kt")
 }
 dependencies {

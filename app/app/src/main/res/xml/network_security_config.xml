@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 只对 127.0.0.1 / localhost 放行 cleartext HTTP：AzurPilot WebUI 跑在 Termux 的
-     pywebio（gui.py, 22267）上，其余域沿用系统默认（API 28+ 禁 cleartext） -->
+<!-- AP 公网直连使用动态 IPv4/IPv6，无法预先枚举域名；注册与配对仍使用 HTTPS。 -->
 <network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>
         <domain includeSubdomains="false">localhost</domain>
