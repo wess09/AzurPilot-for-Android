@@ -328,15 +328,18 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
         val sessionGeneration = generation
         val target = remoteTarget
         val endpoint = if (target == null) RuntimeConnection.endpoint.wsUrl else {
-            requireNotNull(remoteStore).resolve(target).replaceFirst("https://", "wss://") + "api/v1/ws"
+            requireNotNull(remoteStore).resolve(target).replaceFirst("https://", "wss://")
+                .replaceFirst("http://", "ws://") + "api/v1/ws"
         }
         return suspendCancellableCoroutine { cont ->
             var opened = false
             var resumed = false
+            var heartbeat: Job? = null
 
             fun finish() {
                 if (resumed) return
                 resumed = true
+                heartbeat?.cancel()
                 if (cont.isActive) cont.resume(opened)
             }
 
@@ -345,6 +348,16 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
                     if (sessionGeneration != generation) { webSocket.cancel(); return }
                     socket = webSocket
                     opened = true
+                    heartbeat = scope.launch(AppDispatchers.IO) {
+                        delay(15_000)
+                        while (sessionGeneration == generation) {
+                            if (!_connected.value || call("system.ping", timeoutMs = 10_000) !is Reply.Ok) {
+                                webSocket.cancel()
+                                break
+                            }
+                            delay(15_000)
+                        }
+                    }
                     Timber.d("azurpilot gateway connected")
                 }
 
@@ -358,11 +371,17 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    if (target != null && sessionGeneration == generation) remoteStore?.connectionFailed(
+                        endpoint.replaceFirst("wss://", "https://").replaceFirst("ws://", "http://")
+                            .removeSuffix("api/v1/ws"))
                     if (socket === webSocket) socket = null
                     finish()
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    if (target != null && sessionGeneration == generation) remoteStore?.connectionFailed(
+                        endpoint.replaceFirst("wss://", "https://").replaceFirst("ws://", "http://")
+                            .removeSuffix("api/v1/ws"))
                     if (socket === webSocket) socket = null
                     Timber.d(t, "azurpilot gateway socket failure")
                     finish()
@@ -372,6 +391,7 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
             val boundSocket = client.newWebSocket(request, listener)
             socket = boundSocket
             cont.invokeOnCancellation {
+                heartbeat?.cancel()
                 boundSocket.cancel()
                 if (socket === boundSocket) socket = null
             }

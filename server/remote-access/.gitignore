@@ -1,6 +1,0 @@
-*.db
-*.db-*
-certificates/
-service.env
-/remote-access
-/remote-access.exe

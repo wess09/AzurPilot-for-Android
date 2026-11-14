@@ -4,4 +4,5 @@ package com.azurpilot.ghio.remoteaccess
 data class RemotePairing(val deviceId: String, val name: String, val url: String, val accessToken: String)
 class RemotePairings(val resolver: suspend (RemotePairing) -> String) {
     suspend fun resolve(pairing: RemotePairing) = resolver(pairing)
+    fun connectionFailed(url: String) {}
 }

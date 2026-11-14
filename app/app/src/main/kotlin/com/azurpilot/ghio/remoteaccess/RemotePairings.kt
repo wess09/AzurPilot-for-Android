@@ -51,6 +51,7 @@ class RemotePairings(context: Context) {
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS).callTimeout(15, TimeUnit.SECONDS)
         .followRedirects(false).build()
+    private val connections = RemoteConnections(client)
 
     /** 固定注册服务地址。 / Fixed registry service URL. */
     companion object {
@@ -95,15 +96,15 @@ class RemotePairings(context: Context) {
     /** 每次打开都重新解析固定入口，避免重启后继续使用旧 Tunnel。 / Resolves the stable URL on every open. */
     suspend fun resolve(pairing: RemotePairing): String = withContext(Dispatchers.IO) {
         require(pairing.url == "$REGISTRY/d/${pairing.deviceId}/")
-        client.newCall(Request.Builder().url(pairing.url).header("Cache-Control", "no-cache").build())
-            .execute().use { response ->
-                check(response.code != 302 || response.header("Location") != "/error") { "AP 暂时离线" }
-                check(response.code == 301) { "HTTP ${response.code}" }
-                val location = response.header("Location").orEmpty()
-                require(location.matches(Regex("https://[a-z0-9-]+\\.trycloudflare\\.com/")))
-                location
-            }
+        connections.resolve(pairing.url, pairing.deviceId)
     }
+
+    /**
+     * 标记失败入口，下一次解析优先尝试其他路径。
+     *
+     * Marks a failed endpoint so the next resolution tries another route first.
+     */
+    fun connectionFailed(url: String) = connections.connectionFailed(url)
 
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
