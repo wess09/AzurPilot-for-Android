@@ -46,6 +46,7 @@ import com.azurpilot.ghio.proot.ProotPhase
 import com.azurpilot.ghio.service.HostState
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.remoteaccess.RemotePairingCard
+import com.azurpilot.ghio.remoteaccess.RemoteLinkAnimation
 import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.ui.azurpilot.sections.ConfigSection
 import com.azurpilot.ghio.ui.azurpilot.sections.LogsSection
@@ -157,6 +158,12 @@ private fun AzurPilotRuntimeSurface(
                         verticalArrangement = Arrangement.spacedBy(AppTokens.Spacing.lg),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
+                        if (remoteName != null && !authRequired) {
+                            RemoteLinkAnimation(
+                                modifier = Modifier.padding(top = AppTokens.Spacing.lg),
+                                active = active,
+                            )
+                        }
                         Text(stringResource(R.string.remote_client_hint))
                         if (remoteName != null) Text(stringResource(
                             if (authRequired) R.string.remote_pair_auth_failed else R.string.remote_pair_open_failed))
