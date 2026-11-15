@@ -823,6 +823,7 @@
     <string name="home_needs_binding_description">點選右上角綁定，選擇已綁定裝置或新增 AzurPilot。</string>
     <string name="home_remote_offline_title">AzurPilot 未連線</string>
     <string name="home_remote_offline_description">正在嘗試重新連線，請確認 AzurPilot 已啟動並連上網路。</string>
+    <string name="home_remote_connecting_description">正在建立遠端連線，自動選擇直連或 P2P 通道，請稍候。</string>
     <string name="home_remote_no_instance_description">請在 AzurPilot 中建立或選擇設定後再啟動。</string>
     <string name="home_runtime_start_description">下載 Runtime 後，即可在本機啟動任務。</string>
     <string name="home_task_schedule">%1$s · %2$s</string>

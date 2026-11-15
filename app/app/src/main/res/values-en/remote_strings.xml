@@ -31,5 +31,6 @@
     <string name="remote_pair_rate_limited">Too many pairing attempts. Try again in one minute.</string>
     <string name="remote_pair_api_mismatch">The pairing API was not found (HTTP 404). Update AzurPilot and AFA, then retry.</string>
     <string name="remote_pair_open_failed">Remote AzurPilot is offline. Open it again later.</string>
+    <string name="remote_pair_connecting">Establishing the remote connection. Direct and P2P routes are chosen automatically.</string>
     <string name="remote_pair_remove">Remove</string>
 </resources>

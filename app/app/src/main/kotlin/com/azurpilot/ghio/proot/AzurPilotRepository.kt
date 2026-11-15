@@ -66,6 +66,9 @@ class AzurPilotRepository(
     /** 网关长连接是否存活（自轮询同步） / Whether the gateway WebSocket is alive (synced by polling). */
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
 
+    /** 远程会话正在建立（解析入口与握手期间）。 / The remote session is being established. */
+    val connecting: StateFlow<Boolean> get() = gateway.connecting
+
     /**
      * 网关要求先登录（本机直连时为 false）；为真时界面出登录页
      *

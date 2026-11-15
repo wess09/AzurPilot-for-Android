@@ -135,6 +135,7 @@ fun HangarScreen(
     val run by runController.state.collectAsStateWithLifecycle()
     val proot by prootHost.state.collectAsStateWithLifecycle()
     val connected by repository.connected.collectAsStateWithLifecycle()
+    val connecting by repository.connecting.collectAsStateWithLifecycle()
     val overview by repository.overview.collectAsStateWithLifecycle()
     val selectedInstance by repository.selectedInstance.collectAsStateWithLifecycle()
     val remoteName by repository.remoteName.collectAsStateWithLifecycle()
@@ -172,6 +173,7 @@ fun HangarScreen(
         remoteMode -> remoteHomeMode(
             hasTarget = sourceId != "local",
             connected = connected,
+            connecting = connecting,
             selectedInstance = selectedInstance,
             overview = activeOverview,
             busy = schedulerBusy,
@@ -230,6 +232,7 @@ fun HangarScreen(
                 mode = mode,
                 targetName = if (remoteMode) remoteName else null,
                 descriptionOverride = when {
+                    mode == HomeMode.CONNECTING && remoteMode -> R.string.home_remote_connecting_description
                     remoteMode || runMode != RunMode.FOREGROUND -> null
                     mode in listOf(HomeMode.NEEDS_ACTION, HomeMode.RUNNING_INTERRUPTED) ->
                         host.environmentIssue?.messageRes
@@ -350,11 +353,13 @@ private enum class HomeMode {
 private fun remoteHomeMode(
     hasTarget: Boolean,
     connected: Boolean,
+    connecting: Boolean,
     selectedInstance: String?,
     overview: AzurPilotOverview?,
     busy: Boolean,
 ): HomeMode = when {
     !hasTarget -> HomeMode.NEEDS_BINDING
+    !connected && connecting -> HomeMode.CONNECTING
     !connected -> HomeMode.REMOTE_OFFLINE
     selectedInstance == null -> HomeMode.NO_INSTANCE
     overview == null -> HomeMode.CONNECTING

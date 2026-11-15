@@ -823,6 +823,7 @@
     <string name="home_needs_binding_description">右上の登録ボタンから、登録済みのデバイスを選択するか AzurPilot を登録してください。</string>
     <string name="home_remote_offline_title">AzurPilot に未接続</string>
     <string name="home_remote_offline_description">再接続中です。AzurPilot が起動し、オンラインであることを確認してください。</string>
+    <string name="home_remote_connecting_description">リモート接続を確立しています。直接接続と P2P を自動的に選択します。</string>
     <string name="home_remote_no_instance_description">AzurPilot で設定を作成または選択してから開始してください。</string>
     <string name="home_runtime_start_description">Runtime をダウンロードすると、このデバイスでタスクを開始できます。</string>
     <string name="home_task_schedule">%1$s · %2$s</string>

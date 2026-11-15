@@ -31,5 +31,6 @@
     <string name="remote_pair_rate_limited">試行回数が多すぎます。1分後に再試行してください。</string>
     <string name="remote_pair_api_mismatch">ペアリング API がありません（HTTP 404）。AzurPilot と AFA を更新してください。</string>
     <string name="remote_pair_open_failed">リモート AzurPilot はオフラインです。後でもう一度開いてください。</string>
+    <string name="remote_pair_connecting">リモート接続を確立しています。直接接続と P2P を自動的に選択します。</string>
     <string name="remote_pair_remove">削除</string>
 </resources>

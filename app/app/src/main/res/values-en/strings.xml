@@ -835,6 +835,7 @@
     <string name="home_needs_binding_description">Use Bind in the top-right to select a saved device or bind AzurPilot.</string>
     <string name="home_remote_offline_title">AzurPilot is offline</string>
     <string name="home_remote_offline_description">Reconnecting. Make sure AzurPilot is running and online.</string>
+    <string name="home_remote_connecting_description">Establishing the remote connection. Direct and P2P routes are chosen automatically.</string>
     <string name="home_remote_no_instance_description">Create or select a configuration in AzurPilot before starting.</string>
     <string name="home_runtime_start_description">Download Runtime to start tasks on this device.</string>
     <string name="home_task_schedule">%1$s · %2$s</string>

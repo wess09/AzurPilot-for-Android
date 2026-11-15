@@ -96,6 +96,7 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
         stop()
         previous?.cancelAndJoin()
         remoteTarget = pairing
+        _connecting.value = pairing != null
         _sourceId.value = pairing?.deviceId ?: "local"
         _remoteName.value = pairing?.name?.ifBlank { pairing.deviceId.take(8) }
         subscription = null to emptyList()
@@ -151,6 +152,15 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
     /** 与网关的长连接是否存活；唯一事实源在 [awaitSession] / Whether the gateway WebSocket is alive; the single source of truth is [awaitSession]. */
     val connected: StateFlow<Boolean> = _connected.asStateFlow()
 
+    private val _connecting = MutableStateFlow(false)
+
+    /**
+     * 远程目标正在建立或恢复会话，包含重试等待；本机目标恒为 false。
+     *
+     * A remote session is being established or recovered, including retry waits. False locally.
+     */
+    val connecting: StateFlow<Boolean> = _connecting.asStateFlow()
+
     /**
      * 网关要求先登录；本机直连时为 false
      *
@@ -200,6 +210,7 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
         loop = scope.launch(AppDispatchers.IO) {
             var backoff = RECONNECT_MIN_MS
             while (true) {
+                _connecting.value = remoteTarget != null
                 // awaitSession 要挂到这条连接**结束**才返回；只在 onOpen 就返回会让循环
                 // 每 2 秒另开一条，旧连接一直挂着，直到撞上网关的连接数上限被踢
                 val opened = runCatching { awaitSession() }.getOrElse {
@@ -207,6 +218,7 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
                     Timber.d(it, "azurpilot gateway connect failed")
                     false
                 }
+                _connecting.value = remoteTarget != null
                 _connected.value = false
                 failAllPending()
                 backoff = if (opened) RECONNECT_MIN_MS else (backoff * 2).coerceAtMost(RECONNECT_MAX_MS)
@@ -228,6 +240,7 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
         socket?.close(NORMAL_CLOSE, null)
         socket = null
         _connected.value = false
+        _connecting.value = false
         _authRequired.value = false
         failAllPending()
     }
@@ -402,6 +415,7 @@ class AzurPilotGateway(private val scope: CoroutineScope, private val remoteStor
         if (sessionGeneration != generation || socket !== webSocket) return
         _authRequired.value = false
         _connected.value = true
+        _connecting.value = false
         val (instance, topics) = subscription
         if (topics.isNotEmpty()) scope.launch(AppDispatchers.IO) { subscribe(instance, topics) }
     }

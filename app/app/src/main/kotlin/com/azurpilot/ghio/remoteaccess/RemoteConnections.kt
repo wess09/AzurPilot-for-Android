@@ -1,16 +1,26 @@
 package com.azurpilot.ghio.remoteaccess
 
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 
 /**
  * 在 IO 调度器解析固定入口并验证客户端可达的 HTTP 地址，直连失败后静默尝试 P2P，再请求 Cloudflare。
@@ -25,6 +35,7 @@ class RemoteConnections(
     private val failed = ConcurrentHashMap<String, Long>()
     private val p2pUrls = ConcurrentHashMap<String, String>()
     private val activeP2p = ConcurrentHashMap<String, Peer2PeerConnection>()
+    private val lastGood = ConcurrentHashMap<String, String>()
     private val probeClient = client.newBuilder().connectTimeout(2, TimeUnit.SECONDS)
         .callTimeout(3, TimeUnit.SECONDS).followRedirects(false).build()
 
@@ -38,6 +49,7 @@ class RemoteConnections(
         val stable = p2pUrls.remove(key) ?: key
         failed[stable] = System.nanoTime()
         activeP2p.remove(stable)?.close()
+        lastGood.values.removeAll(setOf(stable))
     }
 
     /**
@@ -82,23 +94,57 @@ class RemoteConnections(
 
     private fun p2pKey(deviceId: String) = "p2p://$deviceId"
 
-    private fun reachable(url: String, deviceId: String): Boolean = runCatching {
-        probeClient.newCall(Request.Builder().url(url.trimEnd('/') + "/healthz").build())
-            .execute().use { response ->
-                if (!response.isSuccessful) return@use false
-                val data = JSONObject(response.body.string())
-                data.optString("status") == "ok" && data.optInt("protocolVersion") == 1 &&
-                    data.optString("device_id") == deviceId
+    private suspend fun reachable(url: String, deviceId: String): Boolean = suspendCancellableCoroutine { pending ->
+        val call = probeClient.newCall(Request.Builder().url(url.trimEnd('/') + "/healthz").build())
+        pending.invokeOnCancellation { call.cancel() }
+        call.enqueue(object : Callback {
+            override fun onFailure(call: Call, failure: IOException) {
+                pending.resume(false)
             }
-    }.getOrDefault(false)
 
-    private fun direct(data: JSONObject, deviceId: String): String? {
-        val endpoints = data.optJSONArray("endpoints") ?: return null
-        for (index in 0 until endpoints.length()) {
-            val url = endpoints.optJSONObject(index)?.optString("url").orEmpty()
-            if (isDirect(url) && !excluded(url) && reachable(url, deviceId)) return url.trimEnd('/') + "/"
+            override fun onResponse(call: Call, response: Response) {
+                val valid = runCatching {
+                    response.use {
+                        if (!it.isSuccessful) return@use false
+                        val data = JSONObject(it.body.string())
+                        data.optString("status") == "ok" && data.optInt("protocolVersion") == 1 &&
+                            data.optString("device_id") == deviceId
+                    }
+                }.getOrDefault(false)
+                pending.resume(valid)
+            }
+        })
+    }
+
+    /**
+     * 并行探测全部直连候选，先通者胜：串行等超时会把建链拖到数倍 RTT。
+     *
+     * Probes all direct candidates concurrently and takes the first one that answers;
+     * sequential probing would stretch establishment to several times the round trip.
+     */
+    private suspend fun direct(data: JSONObject, deviceId: String): String? = coroutineScope {
+        val endpoints = data.optJSONArray("endpoints") ?: return@coroutineScope null
+        val candidates = (0 until endpoints.length()).mapNotNull { index ->
+            endpoints.optJSONObject(index)?.optString("url").orEmpty().takeIf { value ->
+                isDirect(value) && !excluded(value)
+            }
         }
-        return null
+        val probes: List<Deferred<String?>> = candidates.map { candidate ->
+            async(Dispatchers.IO) { if (reachable(candidate, deviceId)) candidate else null }
+        }
+        val pending = probes.toMutableList()
+        while (pending.isNotEmpty()) {
+            val (probe, winner) = select<Pair<Deferred<String?>, String?>> {
+                pending.forEach { candidate -> candidate.onAwait { candidate to it } }
+            }
+            if (winner != null) {
+                probes.forEach { it.cancel() }
+                lastGood[deviceId] = winner.trimEnd('/')
+                return@coroutineScope winner.trimEnd('/') + "/"
+            }
+            pending.remove(probe)
+        }
+        null
     }
 
     private suspend fun peerToPeer(
@@ -129,6 +175,19 @@ class RemoteConnections(
     }
 
     /**
+     * 先探测上次成功的入口：健康检查已校验 device_id，注册服务慢或离线也不拖累重连。
+     *
+     * Probes the previously successful entry first; its health check already verifies device_id,
+     * so a slow or unreachable registry never delays reconnection.
+     */
+    private suspend fun cached(deviceId: String): String? {
+        val cached = lastGood[deviceId] ?: return null
+        if (reachable(cached, deviceId)) return "$cached/"
+        lastGood.remove(deviceId, cached)
+        return null
+    }
+
+    /**
      * 每次重连重新读取候选，旧服务保留 301 解析；全程不向注册服务发送 AP 登录凭据。
      *
      * Reloads candidates on reconnect, retaining legacy 301 support without sending AP credentials.
@@ -138,6 +197,7 @@ class RemoteConnections(
         val fixed = requireNotNull(entry.toHttpUrlOrNull())
         require(fixed.scheme == "https" && fixed.username.isEmpty() && fixed.password.isEmpty() &&
             fixed.encodedPath == "/d/$deviceId/" && fixed.query == null && fixed.fragment == null)
+        cached(deviceId)?.let { return it }
         val api = fixed.newBuilder().encodedPath("/api/v1/devices/$deviceId").build().toString()
         fun read(): JSONObject? = client.newCall(Request.Builder().url("$api/resolve")
             .header("Cache-Control", "no-cache").build()).execute().use { response ->

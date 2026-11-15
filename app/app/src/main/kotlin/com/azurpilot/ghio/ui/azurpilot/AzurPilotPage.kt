@@ -111,6 +111,7 @@ private fun AzurPilotRuntimeSurface(
     content: @Composable (AzurPilotRepository) -> Unit,
 ) {
     val connected by repository.connected.collectAsStateWithLifecycle()
+    val connecting by repository.connecting.collectAsStateWithLifecycle()
     val remoteName by repository.remoteName.collectAsStateWithLifecycle()
     val settings: AppSettingsManager = koinInject()
     val remoteClientMode by settings.remoteClientMode.collectAsStateWithLifecycle()
@@ -166,7 +167,11 @@ private fun AzurPilotRuntimeSurface(
                         }
                         Text(stringResource(R.string.remote_client_hint))
                         if (remoteName != null) Text(stringResource(
-                            if (authRequired) R.string.remote_pair_auth_failed else R.string.remote_pair_open_failed))
+                            when {
+                                authRequired -> R.string.remote_pair_auth_failed
+                                connecting -> R.string.remote_pair_connecting
+                                else -> R.string.remote_pair_open_failed
+                            }))
                         RemotePairingCard()
                     }
                 } else RuntimeGate(

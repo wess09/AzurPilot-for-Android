@@ -833,6 +833,7 @@
     <string name="home_needs_binding_description">点击右上角绑定，选择已绑定设备或添加 AzurPilot。</string>
     <string name="home_remote_offline_title">AzurPilot 未连接</string>
     <string name="home_remote_offline_description">正在尝试重新连接，请确认 AzurPilot 已启动并联网。</string>
+    <string name="home_remote_connecting_description">正在建立远程连接，自动选择直连或 P2P 通道，请稍候。</string>
     <string name="home_remote_no_instance_description">请在 AzurPilot 中创建或选择配置后再启动。</string>
     <string name="home_runtime_start_description">下载 Runtime 后，即可在本机启动任务。</string>
     <string name="home_task_schedule">%1$s · %2$s</string>

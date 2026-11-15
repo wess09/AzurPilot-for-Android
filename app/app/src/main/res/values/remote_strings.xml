@@ -31,5 +31,6 @@
     <string name="remote_pair_rate_limited">配对尝试过于频繁，请一分钟后重试。</string>
     <string name="remote_pair_api_mismatch">配对服务接口不存在（HTTP 404），请更新 AzurPilot 和 AFA 后重试。</string>
     <string name="remote_pair_open_failed">远程 AzurPilot 暂时离线，请稍后重新打开。</string>
+    <string name="remote_pair_connecting">正在建立远程连接，自动选择直连或 P2P 通道，请稍候。</string>
     <string name="remote_pair_remove">移除</string>
 </resources>
