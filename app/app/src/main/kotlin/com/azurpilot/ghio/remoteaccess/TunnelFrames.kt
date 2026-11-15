@@ -47,7 +47,7 @@ class TunnelProtocolException(message: String) : IOException(message)
  */
 fun encodeTunnelFrame(frame: TunnelFrame): ByteArray {
     if (frame.type !in TunnelFrameType.ALL) throw TunnelProtocolException("未知帧类型 ${frame.type}")
-    if (frame.streamId !in 0..65535) throw TunnelProtocolException("streamId 超出 u16")
+    if (frame.streamId !in 1..65535) throw TunnelProtocolException("streamId 必须是 1–65535")
     if (frame.payload.size > TUNNEL_MAX_PAYLOAD) throw TunnelProtocolException("帧 payload 超过上限")
     return ByteArray(TUNNEL_HEADER_SIZE + frame.payload.size).apply {
         this[0] = frame.type.toByte()

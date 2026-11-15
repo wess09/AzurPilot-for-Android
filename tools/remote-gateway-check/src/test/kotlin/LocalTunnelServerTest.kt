@@ -26,10 +26,12 @@ import kotlin.test.assertTrue
 class LocalTunnelServerTest {
     @Test fun sendsProtocolPingKeepalive() {
         val ping = CountDownLatch(1)
-        val connection = LoopbackConnection(onPing = { ping.countDown() })
+        val pingStreamId = AtomicReference(0)
+        val connection = LoopbackConnection(onPing = { pingStreamId.set(it); ping.countDown() })
         val server = LocalTunnelServer(connection, pingIntervalMs = 10).also { it.startTunnel() }
         try {
             assertTrue(ping.await(2, TimeUnit.SECONDS))
+            assertTrue(pingStreamId.get() in 1..65535)
         } finally {
             server.stop()
         }
@@ -89,14 +91,14 @@ class LocalTunnelServerTest {
         }
     }
 
-    private class LoopbackConnection(private val onPing: (() -> Unit)? = null) : Peer2PeerConnection {
+    private class LoopbackConnection(private val onPing: ((Int) -> Unit)? = null) : Peer2PeerConnection {
         override val localUrl: String = "memory://loopback"
         private val remote = RemoteHandler()
         private var listener: ((TunnelFrame) -> Unit)? = null
         val messageLengths = mutableListOf<Int>()
 
         override fun send(frame: TunnelFrame): Boolean {
-            if (frame.type == TunnelFrameType.PING) onPing?.invoke()
+            if (frame.type == TunnelFrameType.PING) onPing?.invoke(frame.streamId)
             remote.handle(frame)
             return true
         }

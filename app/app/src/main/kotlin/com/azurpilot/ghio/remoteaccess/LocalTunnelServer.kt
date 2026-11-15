@@ -25,6 +25,7 @@ class LocalTunnelServer(
     private val httpStreams = ConcurrentHashMap<Int, HttpExchange>()
     private val webSockets = ConcurrentHashMap<Int, TunnelWebSocket>()
     private val wsMessages = ConcurrentHashMap<Int, WsMessage>()
+    private var pingStreamId: Int = 0
     private var keepAlive: Timer? = null
 
     /** 本地网关入口；始终是 http://127.0.0.1:<随机端口>/。 / Local gateway entry with a random port. */
@@ -33,13 +34,14 @@ class LocalTunnelServer(
     /** 启动本地服务并安装远端帧回调。 / Starts the local service and installs the remote-frame callback. */
     fun startTunnel() {
         require(pingIntervalMs > 0)
+        if (pingStreamId == 0) pingStreamId = allocateStreamId()
         connection.setFrameListener(::handleFrame)
         connection.setCloseListener { stop() }
         keepAlive = Timer("azurpilot-p2p-ping", true).apply {
             scheduleAtFixedRate(object : TimerTask() {
                 override fun run() {
                     val sent = runCatching {
-                        connection.send(TunnelFrame(TunnelFrameType.PING, 0, ByteArray(0)))
+                        connection.send(TunnelFrame(TunnelFrameType.PING, pingStreamId, ByteArray(0)))
                     }.getOrDefault(false)
                     if (!sent) stop()
                 }
@@ -105,9 +107,8 @@ class LocalTunnelServer(
             }
             TunnelFrameType.WS_END -> handleWsEnd(frame)
             TunnelFrameType.WS_CLOSE -> closeStream(frame.streamId)
-            TunnelFrameType.PING -> sendOrClose(frame.streamId,
-                TunnelFrame(TunnelFrameType.PONG, frame.streamId, ByteArray(0)))
-            TunnelFrameType.PONG, TunnelFrameType.HTTP_OPEN, TunnelFrameType.WS_OPEN -> Unit
+            TunnelFrameType.PING, TunnelFrameType.PONG,
+            TunnelFrameType.HTTP_OPEN, TunnelFrameType.WS_OPEN -> Unit
             else -> closeStream(frame.streamId)
         }
     }

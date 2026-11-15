@@ -54,6 +54,9 @@ class TunnelFramesTest {
             TunnelFrameDecoder().feed(byteArrayOf(99, 0, 0, 0, 0, 0, 0))
         }
         assertFailsWith<TunnelProtocolException> {
+            encodeTunnelFrame(TunnelFrame(TunnelFrameType.PING, 0, ByteArray(0)))
+        }
+        assertFailsWith<TunnelProtocolException> {
             encodeTunnelFrame(TunnelFrame(TunnelFrameType.DATA, 1, ByteArray(TUNNEL_MAX_PAYLOAD + 1)))
         }
         assertFailsWith<TunnelProtocolException> {
