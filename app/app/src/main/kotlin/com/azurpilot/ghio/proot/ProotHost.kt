@@ -258,10 +258,7 @@ class ProotHost(
         if (awaitServices(SERVICES_UP_MS)) {
             setState(ProotPhase.RUNNING)
             Timber.i("proot session up: AzurPilot ready on %d", RuntimeConnection.endpoint.port)
-            // 会话健康 = 新 rootfs 体检通过：统一在此回收旧版备份。手动整包更新链
-            // （applyUpdate）不像自动更新链那样自带体检后清理，不做这步的话
-            // rootfs.previous（约 2.4GB）会永久滞留且没有任何 UI 能回收
-            provisioner.cleanupPrevious()
+            provisioner.cleanupPreviousAfterSessionStart()
         } else {
             setState(ProotPhase.STARTING, "等待 AzurPilot 服务就绪")
             Timber.w("AzurPilot WebUI not ready within %dms", SERVICES_UP_MS)
@@ -445,8 +442,7 @@ class ProotHost(
                     backoff = RESTART_BACKOFF_INIT_MS
                     setState(ProotPhase.RUNNING)
                     Timber.i("proot session respawned, wrapper ready")
-                    // 与 startLocked 同理：会话健康即回收旧版 rootfs 备份
-                    provisioner.cleanupPrevious()
+                    provisioner.cleanupPreviousAfterSessionStart()
                 }
             }
             Timber.i("proot supervisor exited")

@@ -210,6 +210,7 @@ class RuntimeAutoUpdater(
         _busy.value = true
         var staged = false
         var swapped = false
+        var stoppingRuntime = false
         var wasActive = false
         val archive = File(app.filesDir, ARCHIVE_NAME)
 
@@ -228,7 +229,7 @@ class RuntimeAutoUpdater(
                 ?: throw IOException("发布渠道暂无 $abi 的 Runtime")
 
             val installed = provisioner.installedVersion()
-            if (!runtimeUpdateNeeded(installed, runtime.version)) {
+            if (!runtimeUpdateNeeded(installed, runtime.version, provisioner.deployedVersion())) {
                 Timber.d(
                     "auto update: AP is up-to-date (installed=%s latest=%s)", installed, runtime.version,
                 )
@@ -256,6 +257,7 @@ class RuntimeAutoUpdater(
                 return@withContext false
             }
 
+            provisioner.prepareUpdate()
             provisioner.checkDisk()
 
             // 1. 下载 rootfs 归档
@@ -281,11 +283,11 @@ class RuntimeAutoUpdater(
 
             // 3. 解压到 staging 目录 rootfs.tmp
             _state.value = AutoUpdateState.Extracting(0, runtime.size)
+            staged = true
             provisioner.extractToStaging({ archive.inputStream() }, runtime.size, runtime.version) { read, total ->
                 _state.value = AutoUpdateState.Extracting(read, total)
             }
             archive.delete()
-            staged = true
 
             // 4. 通知运行时挂起活跃实例并写入 reloadalas 恢复清单。
             // 挂起失败必须中止：suspend 同时负责写复活清单，硬着头皮换目录会把
@@ -298,6 +300,7 @@ class RuntimeAutoUpdater(
 
             // 5. 停止旧会话并原子替换 rootfs
             _state.value = AutoUpdateState.Swapping
+            stoppingRuntime = true
             prootHost.stopAndAwait()
             provisioner.commitStaging()
             swapped = true
@@ -305,53 +308,45 @@ class RuntimeAutoUpdater(
             // 6. 启动新版本并探活体检
             _state.value = AutoUpdateState.Verifying
             prootHost.ensureStarted()
-            val healthy = prootHost.awaitServices(HEALTH_CHECK_TIMEOUT_MS)
-
-            if (healthy) {
-                Timber.i("auto update succeeded: %s", runtime.version)
-                provisioner.cleanupPrevious()
-                if (!wasActive) {
-                    // 更新前会话本就没在跑：体检完恢复原状，别替用户把运行时拉起来
-                    prootHost.stopAndAwait()
-                }
-                provisioner.refreshUpdateCheck()
-                _state.value = AutoUpdateState.Completed(runtime.version)
-                true
-            } else {
-                Timber.e("auto update health check failed after %dms, rolling back", HEALTH_CHECK_TIMEOUT_MS)
-                _state.value = AutoUpdateState.RollingBack("新版本健康检查超时")
-                prootHost.stopAndAwait()
-                provisioner.rollbackStaging()
-                prootHost.ensureStarted()
-                val restored = prootHost.awaitServices(HEALTH_CHECK_TIMEOUT_MS)
-                if (!wasActive) prootHost.stopAndAwait()
-                provisioner.refreshUpdateCheck()
-                _state.value = if (restored) {
-                    AutoUpdateState.Failed("新版本启动超时，已自动回滚", rolledBack = true)
-                } else {
-                    AutoUpdateState.Failed("新版本启动超时，已回滚但旧版本未能恢复服务", rolledBack = true)
-                }
-                false
+            if (!prootHost.awaitServices(HEALTH_CHECK_TIMEOUT_MS)) {
+                throw IOException("新版本健康检查超时")
             }
+            if (!wasActive) prootHost.stopAndAwait()
+            provisioner.cleanupPrevious()
+            swapped = false
+            provisioner.refreshUpdateCheck()
+            Timber.i("auto update succeeded: %s", runtime.version)
+            _state.value = AutoUpdateState.Completed(runtime.version)
+            true
         } catch (e: Exception) {
             Timber.e(e, "auto update failed")
             archive.delete()
-            if (staged && !swapped) {
-                runCatching { File(app.filesDir, "rootfs.tmp").deleteRecursively() }
-            }
+            var reason = e.message ?: "自动更新失败"
+            var rolledBack = false
             if (swapped) {
-                runCatching {
+                _state.value = AutoUpdateState.RollingBack(reason)
+                val restored = runCatching {
                     prootHost.stopAndAwait()
                     provisioner.rollbackStaging()
+                    rolledBack = true
                     prootHost.ensureStarted()
-                    prootHost.awaitServices(HEALTH_CHECK_TIMEOUT_MS)
+                    val healthy = prootHost.awaitServices(HEALTH_CHECK_TIMEOUT_MS)
                     if (!wasActive) prootHost.stopAndAwait()
+                    healthy
+                }.onFailure { rollbackError ->
+                    Timber.e(rollbackError, "auto update rollback failed")
+                }.getOrDefault(false)
+                reason += when {
+                    restored -> "，已自动回滚"
+                    rolledBack -> "，已回滚，旧版本未能恢复服务"
+                    else -> "，自动回滚失败"
                 }
                 provisioner.refreshUpdateCheck()
-                _state.value = AutoUpdateState.Failed(e.message ?: "自动更新异常，已回滚", rolledBack = true)
             } else {
-                _state.value = AutoUpdateState.Failed(e.message ?: "自动更新失败", rolledBack = false)
+                if (staged) provisioner.discardStaging()
+                if (stoppingRuntime && wasActive) prootHost.ensureStarted()
             }
+            _state.value = AutoUpdateState.Failed(reason, rolledBack)
             false
         } finally {
             _busy.value = false

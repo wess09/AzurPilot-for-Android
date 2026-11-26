@@ -16,6 +16,8 @@ data class RuntimeUpdateCheck(
     val error: String? = null,
     /** 当前源码提交与已部署镜像输入组成的版本。 / Current source commit plus deployed image inputs. */
     val installedVersion: String? = null,
+    /** 已部署的整包版本。 / The deployed package version. */
+    val deployedVersion: String? = installedVersion,
 ) {
     /**
      * 已知发布版的 AP 提交与当前版本不同；仅构建输入变化不要求重装。
@@ -23,7 +25,7 @@ data class RuntimeUpdateCheck(
      * Whether a known release has a different AP commit; build-input changes alone need no reinstall.
      */
     val available: Boolean
-        get() = checked && error == null && runtimeUpdateNeeded(installedVersion, latestVersion)
+        get() = checked && error == null && runtimeUpdateNeeded(installedVersion, latestVersion, deployedVersion)
 
     /**
      * 源码有差异且镜像构建输入相同，可优先交给热更通道。
@@ -42,8 +44,13 @@ data class RuntimeUpdateCheck(
  * Determines whether a new AP version is needed; compares commits for standard versions and
  * complete versions for legacy formats. Pure and safe on any thread.
  */
-internal fun runtimeUpdateNeeded(installedVersion: String?, latestVersion: String?): Boolean {
-    if (latestVersion == null || latestVersion == installedVersion) return false
+internal fun runtimeUpdateNeeded(
+    installedVersion: String?,
+    latestVersion: String?,
+    deployedVersion: String? = installedVersion,
+): Boolean {
+    // 热更后发布源可能仍指向已部署的整包，重新安装会把源码退回旧提交。
+    if (latestVersion == null || latestVersion == installedVersion || latestVersion == deployedVersion) return false
     if (installedVersion != null && ROOTFS_VERSION.matches(installedVersion) &&
         ROOTFS_VERSION.matches(latestVersion)
     ) {

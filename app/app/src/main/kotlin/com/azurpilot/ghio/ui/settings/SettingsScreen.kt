@@ -1285,8 +1285,8 @@ fun RuntimeSettingsPage(
                     ?: stringResource(R.string.settings_runtime_unknown),
                 icon = Icons.Outlined.Terminal,
             )
-            if (installedVersion != null) {
-                AppInfoRow(stringResource(R.string.settings_runtime_installed), installedVersion, icon = Icons.Outlined.Terminal)
+            runtimeCheck.deployedVersion?.let { deployed ->
+                AppInfoRow(stringResource(R.string.settings_runtime_installed), deployed, icon = Icons.Outlined.Terminal)
             }
             runtimeCheck.latestVersion?.let { latest ->
                 AppInfoRow(stringResource(R.string.settings_runtime_latest), latest, icon = Icons.Outlined.SystemUpdate)

@@ -60,6 +60,19 @@ class RuntimeUpdateCheckTest {
     }
 
     @Test
+    fun `a published package already deployed cannot downgrade hot updated source`() {
+        val result = RuntimeUpdateCheck(
+            checked = true,
+            deployedVersion = oldVersion,
+            installedVersion = runtimeVersionWithSource(oldVersion, oldVersion, currentCommit),
+            latestVersion = oldVersion,
+        )
+        assertFalse(result.available)
+        assertFalse(result.commitOnly)
+        assertTrue(result.copy(latestVersion = "0".repeat(12) + "-77bde9b306").available)
+    }
+
+    @Test
     fun `different AP commit and inputs keeps full update available`() {
         val result = RuntimeUpdateCheck(
             checked = true, installedVersion = oldVersion, latestVersion = latestVersion,

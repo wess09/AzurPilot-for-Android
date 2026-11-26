@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -26,6 +28,13 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.file.FileVisitResult
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 
@@ -148,6 +157,7 @@ class RootfsProvisioner(
             }.onSuccess { version ->
                 val result = RuntimeUpdateCheck(
                     checked = true, latestVersion = version, installedVersion = installedVersion(),
+                    deployedVersion = deployedVersion(),
                 )
                 _updateCheck.value = result
                 Timber.i(
@@ -267,7 +277,7 @@ class RootfsProvisioner(
                 Timber.w(error, "rootfs update failed")
                 _updateCheck.value = _updateCheck.value.copy(error = error.message ?: "更新失败")
             } finally {
-                tmpDir.deleteRecursively()
+                discardStaging()
                 _state.value = ProvisionState.Ready
                 running.set(false)
             }
@@ -302,6 +312,8 @@ class RootfsProvisioner(
 
     private val rootDir: File get() = File(app.filesDir, "rootfs")
     private val tmpDir: File get() = File(app.filesDir, "rootfs.tmp")
+    private val previousDir: File get() = File(app.filesDir, "rootfs.previous")
+    private val cleanupMutex = Mutex()
 
     /** 已装版本标记文件 / The installed-version marker file. */
     private val markerFile: File get() = File(rootDir, MARKER_NAME)
@@ -343,7 +355,8 @@ class RootfsProvisioner(
         } ?: deployed
     }
 
-    private fun deployedVersion(): String? =
+    /** 读取整包部署记录，热更不会修改此值。 / Reads the package version recorded at deployment, before any hot updates. */
+    internal fun deployedVersion(): String? =
         runCatching { markerFile.takeIf { it.isFile }?.readText()?.trim() }.getOrNull()
 
     /**
@@ -353,7 +366,7 @@ class RootfsProvisioner(
      * the queried release version and errors.
      */
     internal fun refreshSourceUpdateCheck() {
-        _updateCheck.update { it.copy(installedVersion = installedVersion()) }
+        _updateCheck.update { it.copy(installedVersion = installedVersion(), deployedVersion = deployedVersion()) }
     }
 
     /**
@@ -369,6 +382,7 @@ class RootfsProvisioner(
         val installed = installedVersion()
         _updateCheck.value = RuntimeUpdateCheck(
             checked = true, latestVersion = installed, installedVersion = installed,
+            deployedVersion = deployedVersion(),
         )
     }
 
@@ -381,10 +395,10 @@ class RootfsProvisioner(
     private suspend fun run(installIfMissing: Boolean) = withContext(Dispatchers.IO) {
         _state.value = ProvisionState.Checking
         try {
-            val previous = File(app.filesDir, "rootfs.previous")
-            if (!rootDir.exists() && previous.exists()) {
-                check(previous.renameTo(rootDir)) { "cannot restore previous rootfs" }
+            if (!rootDir.exists() && previousDir.exists()) {
+                check(previousDir.renameTo(rootDir)) { "cannot restore previous rootfs: $previousDir" }
             }
+            retryRetiredCleanup()
             if (!isInstalled()) {
                 if (!installIfMissing) {
                     _state.value = ProvisionState.NotInstalled
@@ -408,7 +422,7 @@ class RootfsProvisioner(
             _state.value = ProvisionState.Ready
         } catch (e: Exception) {
             Timber.e(e, "rootfs provision failed")
-            tmpDir.deleteRecursively()
+            discardStaging()
             _state.value = ProvisionState.Failed(e.message ?: e.javaClass.simpleName)
         } finally {
             running.set(false)
@@ -510,7 +524,8 @@ class RootfsProvisioner(
             ?: throw IOException("设备架构不受支持：${Build.SUPPORTED_ABIS.firstOrNull()}，需要 ${RuntimeArch.SUPPORTED.joinToString()}")
         val runtime = parseRuntime(info, abi)
             ?: throw IOException("发布渠道暂无 $abi 的 Runtime")
-        if (isInstalled() && !runtimeUpdateNeeded(installedVersion(), runtime.version)) return false
+        if (isInstalled() && !runtimeUpdateNeeded(installedVersion(), runtime.version, deployedVersion())) return false
+        prepareUpdate()
         checkDisk()
         val archive = File(app.filesDir, "rootfs-update.tar.xz")
         try {
@@ -527,7 +542,7 @@ class RootfsProvisioner(
                     _state.value = ProvisionState.Downloading(0, runtime.size)
                 }
             }
-            check(sha256Hex(archive) == runtime.sha256) { "rootfs 下载校验失败" }
+            check(sha256Hex(archive).equals(runtime.sha256, ignoreCase = true)) { "rootfs 下载校验失败" }
             extract({ archive.inputStream() }, runtime.size, runtime.version)
             Timber.i("rootfs installed from release: ${runtime.version}")
         } finally { archive.delete() }
@@ -613,7 +628,7 @@ class RootfsProvisioner(
         expectedVersion: String,
         onProgress: ((read: Long, total: Long) -> Unit)? = null,
     ) {
-        tmpDir.deleteRecursively()
+        discardStaging()
         check(tmpDir.mkdirs()) { "cannot create $tmpDir" }
 
         val counting = CountingInputStream(openArchive().buffered(BUFFER_SIZE)) { read ->
@@ -693,45 +708,126 @@ class RootfsProvisioner(
      */
     internal fun commitStaging() {
         syncUserDataToStaging()
-        val previous = File(app.filesDir, "rootfs.previous")
-        previous.deleteRecursively()
+        prepareUpdate()
         val hadRoot = rootDir.exists()
-        if (hadRoot) check(rootDir.renameTo(previous)) { "cannot preserve previous rootfs" }
+        if (hadRoot && !rootDir.renameTo(previousDir)) {
+            throw IOException("无法备份运行时目录：$rootDir → $previousDir")
+        }
         if (!tmpDir.renameTo(rootDir)) {
-            if (hadRoot) previous.renameTo(rootDir)
+            if (hadRoot && !previousDir.renameTo(rootDir)) {
+                throw IOException("无法恢复上一个运行时目录：$previousDir → $rootDir")
+            }
             throw IOException("rename $tmpDir -> $rootDir failed")
         }
     }
 
     /**
-     * 回滚暂存：删除损坏的 `rootfs`（如有），将 `rootfs.previous` 换回 `rootfs`。
+     * 回滚暂存：先挪开失败的 `rootfs`，再将 `rootfs.previous` 换回 `rootfs`。
      *
-     * 供 [RuntimeAutoUpdater] 健康检查失败时恢复旧版。无 previous 时静默跳过。
+     * 供 [RuntimeAutoUpdater] 健康检查失败时恢复旧版；缺少备份时报告失败。
      *
-     * Rolls the staging back: deletes the broken `rootfs` (if present) and
+     * Rolls the staging back: moves the failed `rootfs` aside (if present) and
      * renames `rootfs.previous` back to `rootfs`.
      *
-     * Used by [RuntimeAutoUpdater] when the health check fails. Silently skips
-     * when no previous exists.
+     * Used by [RuntimeAutoUpdater] when the health check fails; reports a missing backup.
      */
     internal fun rollbackStaging() {
-        val previous = File(app.filesDir, "rootfs.previous")
-        if (!previous.exists()) return
-        rootDir.deleteRecursively()
-        check(previous.renameTo(rootDir)) { "rollback rename failed" }
+        check(previousDir.exists()) { "找不到用于回滚的运行时目录：$previousDir" }
+        val hadRoot = rootDir.exists()
+        if (hadRoot) check(rootDir.renameTo(tmpDir)) { "无法移走启动失败的运行时目录：$rootDir" }
+        if (!previousDir.renameTo(rootDir)) {
+            if (hadRoot && !tmpDir.renameTo(rootDir)) Timber.e("Failed to restore %s from %s", rootDir, tmpDir)
+            throw IOException("无法回滚运行时目录：$previousDir → $rootDir")
+        }
+        retireBackup(tmpDir)
     }
 
     /**
-     * 删除旧版备份 `rootfs.previous`。
+     * 在 IO 线程腾出备份路径，避免旧目录权限问题到下载结束后才暴露。
      *
-     * 供 [RuntimeAutoUpdater] 健康检查通过后清理。
+     * Clears the backup slot on IO before downloading, when a live tree exists.
+     */
+    internal fun prepareUpdate() {
+        if (rootDir.exists() && !retireBackup(previousDir)) {
+            throw IOException("无法移走上一次更新的备份目录：$previousDir")
+        }
+    }
+
+    /**
+     * 更新持锁方通过健康检查后移走旧备份，后台回收内容。
      *
-     * Deletes the old-version backup `rootfs.previous`.
-     *
-     * Used by [RuntimeAutoUpdater] after the health check passes.
+     * Retires the backup after a successful health check while holding the pipeline lock.
      */
     internal fun cleanupPrevious() {
-        File(app.filesDir, "rootfs.previous").deleteRecursively()
+        retireBackup(previousDir)
+    }
+
+    /**
+     * 普通启动通过健康检查后回收旧备份。自动更新持锁期间由更新器负责。
+     *
+     * Retires the backup after a normal healthy startup. The updater owns cleanup while locked.
+     */
+    internal fun cleanupPreviousAfterSessionStart() {
+        if (!tryBeginPipeline()) return
+        try {
+            cleanupPrevious()
+        } finally {
+            endPipeline()
+        }
+    }
+
+    /** 同步清理未提交的暂存树。 / Synchronously removes an uncommitted staging tree. */
+    internal fun discardStaging() {
+        deleteTree(tmpDir)
+    }
+
+    private fun retireBackup(directory: File): Boolean {
+        if (!Files.exists(directory.toPath(), NOFOLLOW_LINKS)) return true
+        // 换名只需要父目录权限，PRoot 遗留的受限子目录不会占住备份路径。
+        val retired = File(app.filesDir, "$RETIRED_PREFIX${UUID.randomUUID()}")
+        if (!directory.renameTo(retired)) {
+            Timber.w("Cannot retire runtime directory %s", directory)
+            return false
+        }
+        scope.launch(Dispatchers.IO) { cleanupMutex.withLock { deleteTree(retired) } }
+        return true
+    }
+
+    private fun retryRetiredCleanup() {
+        scope.launch(Dispatchers.IO) {
+            cleanupMutex.withLock {
+                app.filesDir.listFiles { _, name -> name.startsWith(RETIRED_PREFIX) }
+                    ?.forEach(::deleteTree)
+            }
+        }
+    }
+
+    private fun deleteTree(directory: File) {
+        val path = directory.toPath()
+        if (!Files.exists(path, NOFOLLOW_LINKS)) return
+        var firstError: IOException? = null
+        // 镜像内有指向宿主路径的链接。只删链接本身，并尽量清理其余可写目录。
+        try {
+            Files.walkFileTree(path, object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult = remove(file)
+
+                override fun postVisitDirectory(dir: Path, error: IOException?): FileVisitResult = remove(dir)
+
+                override fun visitFileFailed(file: Path, error: IOException): FileVisitResult = remove(file)
+
+                private fun remove(file: Path): FileVisitResult {
+                    try {
+                        Files.deleteIfExists(file)
+                    } catch (error: IOException) {
+                        if (firstError == null) firstError = error
+                    }
+                    return FileVisitResult.CONTINUE
+                }
+            })
+        } catch (error: IOException) {
+            if (firstError == null) firstError = error
+        }
+        firstError?.let { Timber.w(it, "Runtime directory cleanup incomplete: %s", directory) }
     }
 
     /**
@@ -833,6 +929,7 @@ class RootfsProvisioner(
     }
 
     private companion object {
+        const val RETIRED_PREFIX = "rootfs.previous.stale-"
         /** APK 内置包路径 / The bundled in-APK archive path. */
         const val ASSET_ARCHIVE = "rootfs/rootfs.tar.xz"
 
