@@ -710,6 +710,7 @@
     <string name="ocr_npu_verified">アクセラレーション呼び出し成功</string>
     <string name="ocr_npu_disabled">失敗のため CPU を使用</string>
     <string name="ocr_npu_partial">一部のモデルは CPU を使用</string>
+    <string name="ocr_npu_unsupported_soc">このチップの NPU は非対応のため、OCR には CPU を使用します</string>
     <string name="ocr_ap_runtime">AP 実行環境</string>
     <string name="ocr_running">実行中</string>
     <string name="ocr_not_running">未起動</string>

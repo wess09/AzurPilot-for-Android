@@ -719,6 +719,7 @@
     <string name="ocr_npu_verified">加速调用已通过</string>
     <string name="ocr_npu_disabled">加速失败，已改用 CPU</string>
     <string name="ocr_npu_partial">部分模型已改用 CPU</string>
+    <string name="ocr_npu_unsupported_soc">当前版本不支持此芯片的 NPU，使用 CPU</string>
     <string name="ocr_ap_runtime">AP 运行环境</string>
     <string name="ocr_running">运行中</string>
     <string name="ocr_not_running">未启动</string>

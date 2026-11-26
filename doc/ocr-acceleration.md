@@ -46,6 +46,10 @@ Manifest 还以 `required=false` 请求厂商公开的 RPC、NeuroPilot 和 HiAI
 [XNN 配置接口](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/dijun-v-oss/platform/O1/npu/mnne/include/xnn/c_api/XnnConfig.h)。
 本实现只对完整打包的后端尝试推理。
 
+[LiteRT 2.1.0rc1 的芯片表](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/vendors/qualcomm/supported_soc.csv)
+将骁龙 855（SM8150）和 865（SM8250）列为 Hexagon v66。内置的 QNN HTP 插件从 v68 起，
+识别到 v65/v66 设备时直接使用 LiteRT CPU，并在诊断中报告 `npu_state=unsupported_soc`。
+
 固定形状识别请求 `[N,3,48,320]` 可尝试 NPU，`N` 拆成单图且不改变输入宽度。
 其他宽度、检测器和 pro 档使用宿主 LiteRT CPU，不改写图片宽度。Android 的保存 NCNN 配置
 在内存中转接宿主并保留模型档位；未内置版本明确报错。CPU 会话缓存最多两个，单宿主串行推理；
@@ -100,7 +104,8 @@ Android 12+ 如仍保留原生 tombstone，则附带 `debug/process-exits/trace_
 系统可能已清除堆栈，空缺不能据此排除原生崩溃。原生信号仍不能被 Kotlin 异常捕获，
 因此所有推理库放在 `:ocr` 进程。工作进程退出后，主进程记录当前模型并重新绑定，
 该模型改用 CPU；无法确定模型时暂禁全部 NPU。禁用记录持续到 APK 版本升级，避免
-重启再次触发同一崩溃。AP 和 App 测试使用同一回环 API，连接中断后允许重试一次。
+重启再次触发同一崩溃。若退出摘要或匹配的最后阶段表明正在执行 CPU 路径，主进程仅采集
+日志并重绑，不新增 NPU 禁用记录。AP 和 App 测试使用同一回环 API，连接中断后允许重试一次。
 
 MT6985 的 1.2.103 日志已通过 adapter 选择和编译调用，没有新增原生崩溃，但两个
 测试模型仍因「没有分区」使用 CPU。这份日志缺少厂商编译错误，尚不能确定具体
@@ -358,6 +363,10 @@ attempts only complete bundled backends. HiAI clients come from the
 [official Huawei demo](https://gitee.com/huawei-hiai-foundation/HiAIDemo). Xiaomi has published
 [XNN configuration headers](https://github.com/MiCode/Xiaomi_Kernel_OpenSource/blob/dijun-v-oss/platform/O1/npu/mnne/include/xnn/c_api/XnnConfig.h).
 
+The [LiteRT 2.1.0rc1 SoC table](https://github.com/google-ai-edge/LiteRT/blob/v2.1.0rc1/litert/vendors/qualcomm/supported_soc.csv)
+lists Snapdragon 855 (SM8150) and 865 (SM8250) as Hexagon v66. The bundled QNN HTP plugin starts
+at v68. Known v65/v66 devices use LiteRT CPU directly and report `npu_state=unsupported_soc`.
+
 Recognizer requests shaped `[N,3,48,320]` may use NPU; batches split into single images
 without changing width. Other widths, the detector, and pro use host LiteRT CPU. Saved NCNN
 settings route to the host in memory, retaining the selected model tier. Unknown versions fail
@@ -425,6 +434,8 @@ crashes because the system may have discarded them. Kotlin cannot catch native s
 so all inference libraries run in `:ocr`. After worker death, the main process records the
 active model and rebinds with CPU recovery for that model, or all NPU models if unknown.
 Gates persist until an APK version upgrade to prevent repeating the crash after restart.
+If the exit summary or matching last stage identifies the CPU path, the host collects logs and
+rebinds without adding an NPU gate.
 AP and in-app tests use the same loopback API and retry a broken connection once.
 
 MT6985 logs from 1.2.103 passed adapter selection and compilation calls without a new native

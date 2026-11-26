@@ -48,9 +48,9 @@ class OcrEngine(
         }
     }
     private val sessions = LinkedHashMap<String, Session>(4, 0.75f, true)
-    private val failures = disabledModels.toMutableMap()
-    private val activity = mutableMapOf<String, JsonObject>()
     private val provider = BundledProvider(context)
+    private val failures = if (provider.requiresLegacyDsp) mutableMapOf() else disabledModels.toMutableMap()
+    private val activity = mutableMapOf<String, JsonObject>()
     private var environment: Environment? = null
     private var gpuSoftmax: OcrGpuSoftmax? = null
     private var gpuSoftmaxFailure: String? = disabledModels.values.firstOrNull { "gpu_softmax" in it }
@@ -154,7 +154,9 @@ class OcrEngine(
         put("vendor", provider.vendor)
         mediatekAdapter?.let { put("mediatek_adapter_library", it) }
         mediatekTargetPolicy?.let { put("mediatek_target_policy", it) }
-        val bundled = provider.isLibraryReady() || provider.isHiaiReady()
+        val hiaiReady = provider.isHiaiReady()
+        val bundled = provider.hasBundledLibraries || hiaiReady
+        val ready = provider.isLibraryReady() || hiaiReady
         val recognizers = models.filterValues { it["npu_supported"]?.jsonPrimitive?.boolean == true }.keys
         val disabled = recognizers.count { it in failures || "*" in failures }
         put("npu_libraries_bundled", bundled)
@@ -162,7 +164,8 @@ class OcrEngine(
         put("npu_libraries_ready", bundled)
         put("npu_state", when {
             !hardwareAccelerationEnabled -> "user_disabled"
-            !bundled -> "unavailable"
+            provider.requiresLegacyDsp -> "unsupported_soc"
+            !ready -> "unavailable"
             disabled == recognizers.size -> "disabled"
             sessions.values.any { it.inferenceSucceeded && it.hasNpuEvidence } -> "verified"
             disabled > 0 -> "partially_disabled"
@@ -240,6 +243,7 @@ class OcrEngine(
                     describe(hash)["kind"]?.jsonPrimitive?.content == "detector" -> "detector"
                     describe(hash)["npu_supported"]?.jsonPrimitive?.boolean != true -> "model_not_accelerated"
                     shape[2] != 48L || shape[3] != 320L -> "dynamic_shape"
+                    provider.requiresLegacyDsp -> "npu_unsupported_soc"
                     else -> "npu_unavailable"
                 })
             }
@@ -260,7 +264,6 @@ class OcrEngine(
 
     private fun infer(hash: String, shape: LongArray, values: FloatArray): Output {
         val spec = describe(hash)
-        trace.activeModel(hash)
         require(shape.size == 4 && shape[0] in 1..16 && shape[1] == 3L)
         require(shape[2] in 1..2048 && shape[3] in 1..4096)
         require(shape.fold(1L, Long::times) == values.size.toLong())
@@ -280,6 +283,7 @@ class OcrEngine(
         val session = sessions.getOrPut(hash) {
             while (sessions.size >= 2) {
                 val eldest = sessions.entries.iterator().next()
+                if (eldest.value.lite != null || eldest.value.hiai != 0L) trace.activeModel(eldest.key)
                 eldest.value.close()
                 sessions.remove(eldest.key)
             }
@@ -288,6 +292,7 @@ class OcrEngine(
         if (hardwareAccelerationEnabled && spec["npu_supported"]?.jsonPrimitive?.boolean == true && conversion != null && shape[2] == 48L && shape[3] == 320L &&
             (provider.isLibraryReady() || provider.isHiaiReady())
             && hash !in failures && "*" !in failures) {
+            trace.activeModel(hash)
             try {
                 return if (provider.isHiaiReady()) {
                     runHiai(session, spec.getValue("mnn").jsonObject, shape, values)
@@ -447,6 +452,7 @@ class OcrEngine(
         check(hardwareAccelerationEnabled) { "Hardware acceleration is disabled by the user" }
         val spec = describe(hash)
         val conversion = spec["litert"]?.jsonObject ?: error("Only recognition models support this test")
+        check(!provider.requiresLegacyDsp) { "Bundled QNN HTP does not support this SoC" }
         check(provider.isLibraryReady() && !provider.isHiaiReady()) { "Combined LiteRT delegation unavailable for this vendor" }
         check(hash !in failures && "*" !in failures) { "A previous hardware runtime failure blocks this model" }
         trace.activeModel(hash)
@@ -483,6 +489,7 @@ class OcrEngine(
             }
         } finally {
             trace.captureNative(hash)
+            trace.activeModel(hash)
             session.close()
         }
     }
@@ -686,12 +693,14 @@ class OcrEngine(
     }
 
     private fun runCpu(session: Session, shape: LongArray, values: FloatArray): Output {
+        val hash = session.spec.getValue("sha256").jsonPrimitive.content
+        trace.activeModel(hash, cpuOnly = true)
         val conversion = session.spec.getValue("litert").jsonObject
         val singleShape = shape.copyOf().apply { this[0] = 1 }
         if (session.cpu == null || session.cpuShape?.contentEquals(singleShape) != true) {
             session.cpu?.close()
             session.cpu = null
-            trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "litert_cpu_compile")
+            trace.record(hash, "litert_cpu_compile")
             try {
                 session.cpu = OcrLiteCpu(materialize(conversion), conversion, singleShape,
                     runtime.getValue("litert").jsonPrimitive.content, context.cacheDir)
@@ -837,35 +846,47 @@ class OcrEngine(
     }
 
     private class BundledProvider(private val context: Context) : NpuAcceleratorProvider {
-        val vendor: String
-            get() {
-                // 部分升级到 Android 12 的设备没有填 SoC 字段，仍需使用其硬件标识。
-                val identifiers = buildList {
-                    add(Build.HARDWARE.lowercase())
-                    if (Build.VERSION.SDK_INT >= 31) {
-                        add(Build.SOC_MANUFACTURER.lowercase())
-                        add(Build.SOC_MODEL.lowercase())
-                    }
-                }
-                return when {
-                    identifiers.any {
-                        it.contains("qualcomm") || it == "qti" || it.contains("qcom") ||
-                            Regex("(?:sm|sdm|msm)\\d{3,5}.*").matches(it)
-                    } -> "qualcomm"
-                    identifiers.any { it.contains("mediatek") || Regex("mt\\d{4}.*").matches(it) } -> "mediatek"
-                    identifiers.any { it.contains("kirin") || it.contains("hisi") } -> "hiai"
-                    identifiers.any { it.contains("xring") || it.contains("xiaomi") } -> "xring_unavailable"
-                    else -> "unsupported"
+        val requiresLegacyDsp = requiresLegacyQualcommDsp(
+            if (Build.VERSION.SDK_INT >= 31) Build.SOC_MODEL else "", Build.BOARD, Build.HARDWARE,
+        )
+        val vendor: String = run {
+            // 部分升级到 Android 12 的设备没有填 SoC 字段，仍需使用其硬件标识。
+            val identifiers = buildList {
+                add(Build.HARDWARE.lowercase())
+                if (Build.VERSION.SDK_INT >= 31) {
+                    add(Build.SOC_MANUFACTURER.lowercase())
+                    add(Build.SOC_MODEL.lowercase())
                 }
             }
-        override fun isDeviceSupported() = Build.VERSION.SDK_INT >= 31 && vendor in setOf("qualcomm", "mediatek")
-        override fun isLibraryReady(): Boolean {
-            if (!isDeviceSupported()) return false
-            val suffix = if (vendor == "qualcomm") "Qualcomm" else "MediaTek"
-            return listOf("libLiteRtCompilerPlugin_$suffix.so", "libLiteRtDispatch_$suffix.so").all {
+            when {
+                requiresLegacyDsp || identifiers.any {
+                    it.contains("qualcomm") || it == "qti" || it.contains("qcom") ||
+                        Regex("(?:sm|sdm|msm)\\d{3,5}.*").matches(it)
+                } -> "qualcomm"
+                identifiers.any { it.contains("mediatek") || Regex("mt\\d{4}.*").matches(it) } -> "mediatek"
+                identifiers.any { it.contains("kirin") || it.contains("hisi") } -> "hiai"
+                identifiers.any { it.contains("xring") || it.contains("xiaomi") } -> "xring_unavailable"
+                else -> "unsupported"
+            }
+        }
+        private val libraryNames = when (vendor) {
+            "qualcomm" -> listOf("libLiteRtCompilerPlugin_Qualcomm.so", "libLiteRtDispatch_Qualcomm.so",
+                "libQnnHtp.so", "libQnnHtpPrepare.so", "libQnnSystem.so") +
+                listOf(68, 69, 73, 75, 79, 81).flatMap { version ->
+                    listOf("libQnnHtpV${version}Skel.so", "libQnnHtpV${version}Stub.so")
+                }
+            "mediatek" -> listOf("libLiteRtCompilerPlugin_MediaTek.so", "libLiteRtDispatch_MediaTek.so",
+                "libneuronusdk_adapter.mtk.so", "libneuronusdk_adapter.9.mtk.so")
+            else -> emptyList()
+        }
+        val hasBundledLibraries by lazy {
+            libraryNames.isNotEmpty() && libraryNames.all {
                 File(context.applicationInfo.nativeLibraryDir, it).isFile
             }
         }
+        override fun isDeviceSupported() = Build.VERSION.SDK_INT >= 31 &&
+            ((vendor == "qualcomm" && !requiresLegacyDsp) || vendor == "mediatek")
+        override fun isLibraryReady() = isDeviceSupported() && hasBundledLibraries
         override suspend fun downloadLibrary() = Unit
         fun isHiaiReady(): Boolean = vendor == "hiai" && Build.VERSION.SDK_INT >= 29 &&
             listOf("libocrhiai.so", "libMNN.so", "libMNN_Backend_HiAI.so", "libhiai.so",
@@ -874,18 +895,8 @@ class OcrEngine(
         override fun getLibraryDir(): String {
             val source = File(context.applicationInfo.nativeLibraryDir)
             val directory = File(context.noBackupFilesDir, "ocr-npu/$vendor").apply { mkdirs() }
-            val names = if (vendor == "qualcomm") {
-                listOf("libLiteRtCompilerPlugin_Qualcomm.so", "libLiteRtDispatch_Qualcomm.so",
-                    "libQnnHtp.so", "libQnnHtpPrepare.so", "libQnnSystem.so") +
-                    listOf(68, 69, 73, 75, 79, 81).flatMap { version ->
-                        listOf("libQnnHtpV${version}Skel.so", "libQnnHtpV${version}Stub.so")
-                    }
-            } else {
-                listOf("libLiteRtCompilerPlugin_MediaTek.so", "libLiteRtDispatch_MediaTek.so",
-                    "libneuronusdk_adapter.mtk.so", "libneuronusdk_adapter.9.mtk.so")
-            }
             // 只暴露本厂商插件，避免另一厂商的离线编译器抢先接管模型；链接仍指向安装目录。
-            names.forEach { name ->
+            libraryNames.forEach { name ->
                 val target = File(source, name).toPath()
                 check(Files.isRegularFile(target)) { "Missing NPU runtime library: $name" }
                 val link = File(directory, name).toPath()

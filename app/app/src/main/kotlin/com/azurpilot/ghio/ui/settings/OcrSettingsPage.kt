@@ -109,6 +109,7 @@ fun OcrSettingsPage(
                         "user_disabled" -> R.string.ocr_user_disabled
                         "disabled" -> R.string.ocr_npu_disabled
                         "partially_disabled" -> R.string.ocr_npu_partial
+                        "unsupported_soc" -> R.string.ocr_npu_unsupported_soc
                         "unavailable" -> R.string.ocr_unavailable
                         else -> R.string.ocr_npu_untested
                     }
@@ -263,6 +264,7 @@ fun OcrSettingsPage(
                         "detector",
                         "model_not_accelerated" -> R.string.ocr_cpu_detector
                         "dynamic_shape" -> R.string.ocr_cpu_shape
+                        "npu_unsupported_soc" -> R.string.ocr_npu_unsupported_soc
                         "npu_unavailable" -> R.string.ocr_cpu_unavailable
                         "npu_failed" -> R.string.ocr_cpu_failed
                         else -> null

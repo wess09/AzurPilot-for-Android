@@ -22,18 +22,19 @@ import java.util.concurrent.TimeUnit
 internal class OcrTrace(context: Context) {
     private val directory = context.getExternalFilesDir("debug")?.let { File(it, "ocr") }
     private val manager = context.getSystemService(ActivityManager::class.java)
-    private var activeHash = ""
+    private var activeSummary = ""
 
     /**
-     * 将当前模型写入系统退出摘要，不在张量热路径同步写文件。
+     * 将当前模型及 CPU 路径标记写入系统退出摘要，只有摘要变化时才调用系统服务。
      *
-     * Records the active model in system exit summaries without synchronous hot-path file writes.
+     * Records the active model and CPU path in the system exit summary only when they change.
      */
-    fun activeModel(hash: String) {
-        if (Build.VERSION.SDK_INT >= 30 && activeHash != hash) {
+    fun activeModel(hash: String, cpuOnly: Boolean = false) {
+        val summary = if (cpuOnly) "$CPU_SUMMARY_PREFIX$hash" else hash
+        if (Build.VERSION.SDK_INT >= 30 && activeSummary != summary) {
             runCatching {
-                manager.setProcessStateSummary(hash.toByteArray(Charsets.UTF_8))
-                activeHash = hash
+                manager.setProcessStateSummary(summary.toByteArray(Charsets.UTF_8))
+                activeSummary = summary
             }
         }
     }
@@ -109,5 +110,10 @@ internal class OcrTrace(context: Context) {
                 it.fd.sync()
             }
         }.onFailure { Timber.w(it, "OCR stage logging failed") }
+    }
+
+    companion object {
+        /** 系统退出摘要的 CPU 路径前缀。 / CPU path prefix in system exit summaries. */
+        const val CPU_SUMMARY_PREFIX = "cpu:"
     }
 }

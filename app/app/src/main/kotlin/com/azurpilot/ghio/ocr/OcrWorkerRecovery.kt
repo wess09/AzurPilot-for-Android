@@ -32,9 +32,10 @@ internal class OcrWorkerRecovery(private val context: Context) {
     fun snapshot(): String = JsonObject(disabled.mapValues { JsonPrimitive(it.value) }).toString()
 
     /**
-     * 从退出摘要或最近阶段确定失败模型，无法确定时暂禁所有 NPU；在 IO 线程调用。
+     * 根据退出摘要或匹配阶段记录硬件故障；CPU 路径的退出仅采集日志。在 IO 线程调用。
      *
-     * Gates the model from exit summaries or stages, or all NPU when unknown; called on IO.
+     * Gates hardware failures from exit summaries or matching stages. CPU exits only collect logs.
+     * Called on IO.
      */
     @Synchronized
     fun recordDeath(since: Long) {
@@ -44,20 +45,36 @@ internal class OcrWorkerRecovery(private val context: Context) {
                 .firstOrNull { it.processName == "${context.packageName}:ocr" && it.timestamp >= since }
         }.getOrNull() else null
         val stage = runCatching {
-            File(context.getExternalFilesDir("debug"), "ocr/stages.jsonl")
-                .readLines().lastOrNull()?.let { Json.parseToJsonElement(it).jsonObject }
-                ?.takeIf { (it["timestamp_ms"]?.jsonPrimitive?.longOrNull ?: 0) >= since }
-                ?.takeIf { it["app_version"]?.jsonPrimitive?.content == BuildConfig.VERSION_NAME }
+            val directory = context.getExternalFilesDir("debug") ?: return@runCatching null
+            File(directory, "ocr/stages.jsonl").readLines().asReversed().firstNotNullOfOrNull { line ->
+                runCatching { Json.parseToJsonElement(line).jsonObject }.getOrNull()?.takeIf {
+                    val timestamp = it["timestamp_ms"]?.jsonPrimitive?.longOrNull ?: 0
+                    timestamp >= since && it["app_version"]?.jsonPrimitive?.content == BuildConfig.VERSION_NAME &&
+                        (exit == null || (it["pid"]?.jsonPrimitive?.intOrNull == exit.pid &&
+                            timestamp <= exit.timestamp))
+                }
+            }
         }.getOrNull()
-        val hash = (exit?.processStateSummary?.toString(Charsets.UTF_8) ?:
-            stage?.get("model_sha256")?.jsonPrimitive?.content)
-            ?.takeIf { Regex("[a-f0-9]{64}").matches(it) } ?: "*"
-        val phase = stage?.get("stage")?.jsonPrimitive?.content.orEmpty().take(80)
-        disabled[hash] = "Native OCR worker exited near $phase; NPU disabled until APK update"
-        prefs.edit().putInt("version", BuildConfig.VERSION_CODE).putString("models", snapshot()).commit()
+        val summary = exit?.processStateSummary?.toString(Charsets.UTF_8)
+        val modelHash = Regex("[a-f0-9]{64}")
+        val summaryHash = summary?.removePrefix(OcrTrace.CPU_SUMMARY_PREFIX)?.takeIf(modelHash::matches)
+        val stageHash = stage?.get("model_sha256")?.jsonPrimitive?.content
+        val hash = summaryHash ?: stageHash?.takeIf(modelHash::matches) ?: "*"
+        val phase = stage?.takeIf { stageHash == hash }?.get("stage")?.jsonPrimitive?.content
+        val cpuExit = if (summaryHash != null) {
+            summary.startsWith(OcrTrace.CPU_SUMMARY_PREFIX)
+        } else phase == "litert_cpu_compile"
+        if (cpuExit) {
+            Timber.w("OCR worker exited on the CPU path for %s", hash.take(12))
+        } else {
+            val location = phase?.takeUnless { it.isBlank() || it == "litert_cpu_compile" }
+                ?.take(80) ?: "an unknown stage"
+            disabled[hash] = "Native OCR worker exited near $location; NPU disabled until APK update"
+            prefs.edit().putInt("version", BuildConfig.VERSION_CODE).putString("models", snapshot()).commit()
+            Timber.w("OCR worker exited; CPU recovery enabled for %s", hash.take(12))
+        }
         // 原生信号无法执行工作进程的 finally；同 UID 的主进程仍能读取其残留 logcat。
         val workerPid = exit?.pid ?: stage?.get("pid")?.jsonPrimitive?.intOrNull
         if (hash != "*" && workerPid != null) trace.captureNative(hash, workerPid)
-        Timber.w("OCR worker exited; CPU recovery enabled for %s", hash.take(12))
     }
 }

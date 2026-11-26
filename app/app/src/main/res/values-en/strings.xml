@@ -720,6 +720,7 @@
     <string name="ocr_npu_verified">Accelerated calls passed</string>
     <string name="ocr_npu_disabled">Acceleration failed; using CPU</string>
     <string name="ocr_npu_partial">Some models now use CPU</string>
+    <string name="ocr_npu_unsupported_soc">NPU unavailable on this chip. Using CPU for OCR.</string>
     <string name="ocr_ap_runtime">AP runtime</string>
     <string name="ocr_running">Running</string>
     <string name="ocr_not_running">Not started</string>
