@@ -108,10 +108,14 @@ class LocalUpdateTest(unittest.TestCase):
                          'azurpilot_branch': 'dev', 'hot_update_mode': 'local',
                          'rootfs_version': 'factory-image-1234567890'}
         adapter.write_json(self.root / 'BUILD_MANIFEST', self.manifest)
+        def install_dependencies(cmd, directory, flags, method):
+            subprocess.run([*cmd, method, '--no-audit', '--no-fund'],
+                           cwd=directory, check=True, capture_output=True, **flags)
+
         self.frontend = SimpleNamespace(source_fingerprint=fingerprint, npm_command=npm_command,
-                                        _install_dependencies=lambda cmd, directory, flags:
-                                        subprocess.run([*cmd, 'ci', '--no-audit', '--no-fund'],
-                                                       cwd=directory, check=True, capture_output=True),
+                                        _install_dependencies=install_dependencies,
+                                        _ensure_dependencies=lambda cmd, directory, flags:
+                                        install_dependencies(cmd, directory, flags, 'ci'),
                                         android_manifest=lambda root: json.loads(
                                             (root / 'BUILD_MANIFEST').read_text(encoding='utf-8')))
         adapter.build_frontend(self.frontend, self.root)
@@ -224,6 +228,13 @@ class LocalUpdateTest(unittest.TestCase):
     def test_matching_fingerprint_skips_npm(self):
         with patch.object(self.frontend, 'npm_command', side_effect=AssertionError('unneeded build')):
             adapter.build_frontend(self.frontend, self.root)
+
+    def test_legacy_three_parameter_installer_still_builds(self):
+        install = self.frontend._install_dependencies
+        del self.frontend._ensure_dependencies
+        self.frontend._install_dependencies = lambda cmd, directory, flags: install(cmd, directory, flags, 'ci')
+        self.assertEqual(self.run_update()['result'], 'updated')
+        self.assertEqual((self.root / 'frontend/dist/index.html').read_text(), 'new')
 
     def test_legacy_runtime_keeps_upstream_service(self):
         manifest = dict(self.manifest, hot_update_mode='prebuilt')

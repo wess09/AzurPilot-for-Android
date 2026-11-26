@@ -135,7 +135,12 @@ def build_frontend(module, root):
     previous = directory / '.android-dist.previous'
     shutil.rmtree(temporary, ignore_errors=True)
     command = module.npm_command()
-    module._install_dependencies(command, directory, {})
+    ensure_dependencies = getattr(module, '_ensure_dependencies', None)
+    if ensure_dependencies is None:
+        # 旧镜像只提供三参数安装器，新版通过上游入口选安装方式并校验锁文件。
+        module._install_dependencies(command, directory, {})
+    else:
+        ensure_dependencies(command, directory, {})
     try:
         subprocess.run([*command, 'run', 'build', '--', '--outDir', str(temporary.resolve())],
                        cwd=directory, check=True, timeout=600, capture_output=True, text=True,

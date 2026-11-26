@@ -22,7 +22,7 @@ CODE = 'MC8wLzAvMC8wXDA='
 class EquipmentAdapterTest(unittest.TestCase):
     """覆盖桥接失败和非 Android 后端的隔离。 / Covers failures and other-backend isolation."""
 
-    def fixture(self, method='azurpilot_android'):
+    def fixture(self, method='azurpilot_android', modern=False):
         """提供只暴露上游接线契约的处理器。 / Provides the upstream integration contract."""
         class Handler:
             @staticmethod
@@ -34,18 +34,22 @@ class EquipmentAdapterTest(unittest.TestCase):
                     re.fullmatch(r'[A-Za-z0-9+/]+={0,2}', code)
                 )
 
-        names = ('equipment_code_supported', 'set_fastinput_ime', '_code_input_adb',
-                 '_code_input_uiautomator2', '_clipboard_get')
+        names = ('equipment_code_supported', '_code_input_adb')
+        if modern:
+            names += ('_code_input', '_code_export', '_code_copy', '_code_wait_preview_loaded')
+        else:
+            names += ('set_fastinput_ime', '_code_input_uiautomator2', '_clipboard_get')
         originals = {name: Mock(return_value=name) for name in names}
         for name, original in originals.items():
             setattr(Handler, name, original)
-        module = Namespace(EquipmentCodeHandler=Handler, logger=Mock(),
+        module = Namespace(EquipmentCodeHandler=Handler, logger=Mock(), EQUIPMENT_CODE_TEXTBOX=object(),
+                           Timer=Mock(return_value=Namespace(reached_and_reset=lambda: True)),
                            EmulatorNotRunningError=type('EmulatorNotRunningError', (Exception,), {}),
                            RequestHumanTakeover=type('RequestHumanTakeover', (Exception,), {}))
         adapter.patch_ap_module(module)
         handler = Handler()
         handler.config = Namespace(Emulator_ControlMethod=method)
-        handler.device = Namespace(_azurpilot_android_call_ok=Mock())
+        handler.device = Mock()
         return module, handler, originals
 
     def test_android_requires_explicit_host_capability(self):
@@ -90,6 +94,29 @@ class EquipmentAdapterTest(unittest.TestCase):
         handler.device._azurpilot_android_call_ok.assert_not_called()
         originals['set_fastinput_ime'].assert_not_called()
         originals['_code_input_uiautomator2'].assert_not_called()
+
+    def test_new_input_retries_with_the_bridge_and_keeps_preview_check(self):
+        module, handler, originals = self.fixture(modern=True)
+        handler.loop = lambda **kwargs: range(3)
+        originals['_code_wait_preview_loaded'].side_effect = [False, True]
+        self.assertTrue(handler._code_input(CODE))
+        self.assertEqual(handler.device._azurpilot_android_call_ok.call_count, 2)
+        handler.device.click.assert_called_with(module.EQUIPMENT_CODE_TEXTBOX)
+        handler.device.input_text_fastinput_ime.assert_not_called()
+        originals['_code_input'].assert_not_called()
+
+    def test_new_export_requires_fresh_copy_and_never_uses_u2_fallback(self):
+        _, handler, originals = self.fixture(modern=True)
+        originals['_code_copy'].return_value = False
+        self.assertIsNone(handler._code_export())
+        handler.device._azurpilot_android_call_ok.assert_not_called()
+        originals['_code_copy'].return_value = True
+        handler.device._azurpilot_android_call_ok.return_value = {'code': CODE}
+        self.assertEqual(handler._code_export(), CODE)
+        handler.device._azurpilot_android_call_ok.return_value = {'code': 'invalid'}
+        self.assertIsNone(handler._code_export())
+        handler.device.ensure_clipboard_uiautomator2.assert_not_called()
+        originals['_code_export'].assert_not_called()
 
     def test_bridge_errors_stop_input_and_export(self):
         _, handler, _ = self.fixture()

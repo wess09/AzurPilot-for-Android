@@ -64,16 +64,42 @@ def patch_ap_module(module):
         module.logger.warning('未从 Android 剪贴板读取到有效装备码')
         return None
 
+    def input_with_preview(self, code):
+        # 新版的备用 IME 走主屏设备接口；虚拟屏只使用 Android 桥。
+        for _ in range(2):
+            click_timer = module.Timer(1, count=3)
+            textbox_clicked = False
+            for _ in self.loop(timeout=5):
+                if textbox_clicked and self._code_input_adb(code):
+                    break
+                if click_timer.reached_and_reset():
+                    self.device.click(module.EQUIPMENT_CODE_TEXTBOX)
+                    textbox_clicked = True
+            else:
+                continue
+            if self._code_wait_preview_loaded():
+                return True
+        module.logger.warning('装备码加载失败')
+        return False
+
+    def export_code(self):
+        # 上游在信息栏确认本次复制后才能读取，避免导出上次留在剪贴板的码。
+        return read_code(self) if self._code_copy() else None
+
     replacements = {
         'equipment_code_supported': supported,
-        'set_fastinput_ime': lambda self: None,
         '_code_input_adb': input_code,
-        # Android 失败时继续由上游预览检查和换船保护收尾，不能退回主屏 u2。
-        '_code_input_uiautomator2': lambda self, code: False,
-        '_clipboard_get': read_code,
     }
+    if hasattr(handler, '_code_copy'):
+        replacements.update(_code_input=input_with_preview, _code_export=export_code)
+    else:
+        replacements.update(set_fastinput_ime=lambda self: None,
+                            _code_input_uiautomator2=lambda self, code: False,
+                            _clipboard_get=read_code)
     for name, replacement in replacements.items():
-        setattr(handler, name, android_only(getattr(handler, name), replacement))
+        original = getattr(handler, name, None)
+        if original is not None:
+            setattr(handler, name, android_only(original, replacement))
     handler._android_equipment_adapter = True
 
 
