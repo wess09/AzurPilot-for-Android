@@ -31,7 +31,7 @@ App 版本沿用 GitHub 的 `1.3.*` 版本规则，见[发布通道](release-cha
 调用 `tools/cnb_release.py publish` 分发当前作业的产物：
 
 - ARM64、x86_64 轻量更新 APK 与完整 APK，以及兼容旧版的通用轻量更新 APK。
-- `rootfs-arm64-v8a.tar.xz`、`rootfs-x86_64.tar.xz` 及各自的 `BUILD_MANIFEST`。
+- ARM64 和 x86_64 Runtime 归档及各自的 `BUILD_MANIFEST`。
 - 构建产物中存在的前端归档与对应校验文件。
 - 指向 CNB 附件的 `latest.json`，以及重新生成的 `SHA256SUMS`。
 
@@ -44,10 +44,9 @@ CNB 与 GitHub 共用唯一固定标签 `azurpilot-android-latest`。发布前�
 首次发布创建草稿，后续复用同一个 Release；SHA-256 已匹配的附件无需重复上传。
 其它附件先上传并验证，`latest.json` 最后提交，再更新 Release 标题和 Latest 标记。
 
-成功后删除其它 CNB Release 和 Git tag，只保留固定发布。固定发布保留当前 Runtime、
-前端归档及最近三版 APK。旧源码历史 tag 不再同步回 CNB。产物字节与 GitHub 一致，
-清单保留 ARM64 扁平兼容字段。失败时不清理旧发布；公开发布的附件可能已部分替换，
-客户端大小及 SHA-256 校验会拒绝不匹配文件，重跑补传可完成替换。
+APK 和 Runtime 的文件名含内容哈希。上传中断时，旧清单和它引用的附件仍可下载。
+成功后清理旧 CNB Release 和 Git tag，固定发布保留当前附件及每种带哈希附件的最近两份旧文件。
+补传仍支持不带哈希的旧发布。清单保留 ARM64 扁平兼容字段。
 
 App 首次安装默认选用“CNB 国内源”；设置页和部署页可切回 GitHub 或代理镜像。
 App、Runtime 和前端共用该选择；已有保存的选择不变。
@@ -121,7 +120,7 @@ After publishing the signed GitHub Release, the `publish` job in
 `.github/workflows/rootfs.yml` calls `tools/cnb_release.py publish` with this job's artifacts:
 
 - ARM64 and x86_64 slim updates and full APKs, plus the universal slim update for older apps.
-- `rootfs-arm64-v8a.tar.xz`, `rootfs-x86_64.tar.xz`, and their `BUILD_MANIFEST` files.
+- ARM64 and x86_64 Runtime archives and their `BUILD_MANIFEST` files.
 - Frontend archives and checksum files present in the build outputs.
 - `latest.json` pointing to CNB assets and a regenerated `SHA256SUMS`.
 
@@ -136,12 +135,11 @@ and `[skip ci]` upstream-check commits. The first run creates a draft; subsequen
 the same release. Assets matching SHA-256 need no upload. Other assets are uploaded and verified
 first, `latest.json` is committed last, and then the title and Latest marker are updated.
 
-After success, other CNB releases and Git tags are deleted, leaving only the fixed publication.
-It retains current Runtimes and frontend archives plus the three most recent APK versions.
-Historical source tags are no longer copied back. Artifact bytes match GitHub, and legacy ARM64
-flat fields remain. Failed runs do not prune older publications. Public assets may already be
-partly replaced; client size and SHA-256 checks reject mismatches, and a backfill rerun completes
-the replacement.
+APK and Runtime names contain content hashes. If upload is interrupted, the previous index and
+its referenced files remain downloadable. After success, the fixed release retains the current
+files and the two most recent older hash-named files of each kind. Other CNB releases and Git
+tags are cleaned up. Backfills still support older releases without hash-named assets, and the
+index retains the legacy ARM64 flat fields.
 
 New installations default to CNB. Settings and provisioning allow switching to GitHub or proxies.
 App, Runtime, and frontend downloads share the selection; existing saved choices are retained.

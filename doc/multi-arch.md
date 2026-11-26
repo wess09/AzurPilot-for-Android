@@ -28,7 +28,8 @@ proot 不做指令翻译，rootfs 架构与设备 ABI 必须一一对应。
      `rootfs_arch` 与之一致；
   2. 按架构轻量包：同样收窄 ABI，不内置 rootfs，供新版 App 更新；
   3. 通用轻量包：双 ABI 的 proot 库，保留旧版更新兼容；
-  4. 产物命名 `AzurPilot-Android-<ver>-<abi>-full.apk`、`...-<abi>-update.apk` 与 `...-update.apk`。
+  4. 发布附件在 `full` 或 `update` 后附加内容哈希，例如
+     `AzurPilot-Android-<ver>-<abi>-full-<hash>.apk`。
 - App 侧 `RuntimeArch.deviceAbi()` 取 `Build.SUPPORTED_ABIS` 中第一个受支持
   ABI；内置包架构不符时自动改走 Release 下载对应架构。
   MuMu 可能将通用 APK 优先安装为 ARM 转译；x86_64 设备应安装专用包，更新时也按架构选择。
@@ -79,8 +80,8 @@ match the device ABI exactly. The `SUPPORTED` list in
      rootfs `rootfs_arch` matches;
   2. Per-arch slim APKs: the same ABI filter, no rootfs, used by newer app updaters;
   3. A universal slim APK: proot libraries for both ABIs, retained for older updaters;
-  4. Output names: `AzurPilot-Android-<ver>-<abi>-full.apk`, `...-<abi>-update.apk`, and
-     `...-update.apk`.
+  4. Release asset names append a content hash after `full` or `update`, as in
+     `AzurPilot-Android-<ver>-<abi>-full-<hash>.apk`.
 - On the app side, `RuntimeArch.deviceAbi()` picks the first supported entry
   in `Build.SUPPORTED_ABIS`; when a bundled rootfs has a different arch, the
   app falls back to the release download for the matching ABI.

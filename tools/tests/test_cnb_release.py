@@ -159,6 +159,18 @@ class CnbReleaseTest(unittest.TestCase):
     def write_manifest(self):
         (self.source / "latest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
 
+    def name_payloads_by_checksum(self):
+        """模拟带哈希附件的 GitHub 发布。 / Simulates hash-named GitHub release assets."""
+        for index, (entry, name) in enumerate(cnb.asset_entries(self.manifest)):
+            suffix = ".apk" if name.endswith(".apk") else ".tar.xz"
+            immutable = f"{name.removesuffix(suffix)}-{entry['sha256'][:16]}{suffix}"
+            (self.source / name).rename(self.source / immutable)
+            if index == 0:
+                self.manifest["apkUrl"] = self.base + immutable
+            else:
+                entry["url"] = self.base + immutable
+        self.write_manifest()
+
     def prepare(self):
         return cnb.prepare(self.source, self.output, self.repo, "azurpilot-android-latest",
                            cnb.CNB_REPOSITORY, self.tag, "b" * 40)
@@ -360,6 +372,51 @@ class CnbReleaseTest(unittest.TestCase):
         self.assertEqual(uploads, ["AzurPilot-Android-1.3.0-update.apk", "latest.json"])
         self.assertEqual(api.existing["id"], "release-1")
         self.assertEqual(api.files["latest.json"], (self.output / "latest.json").read_bytes())
+
+    def test_interrupted_publish_keeps_the_previous_index_and_its_payloads(self):
+        old_payloads = {name: (self.source / name).read_bytes()
+                        for _, name in cnb.asset_entries(self.manifest)}
+        old_index = (self.source / "latest.json").read_bytes()
+        self.name_payloads_by_checksum()
+        mirror = self.prepare()
+        api = FakeApi()
+        api.files = {**old_payloads, "latest.json": old_index}
+        api.confirmed = set(api.files)
+        api.existing = {"id": "release-1", "tag_name": self.tag, "draft": False}
+        original_open = api.open
+
+        def interrupted(request, timeout):
+            if request.get_method() == "PUT" and "/rootfs-x86_64-" in request.full_url:
+                raise URLError("upload interrupted")
+            return original_open(request, timeout)
+
+        client = cnb.CnbClient("test-access-token", cnb.CNB_REPOSITORY, api)
+        with patch.object(api, "open", side_effect=interrupted), patch.object(cnb.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "CNB upload failed"):
+                client.publish(self.output, mirror, self.tag)
+        self.assertEqual(api.files["latest.json"], old_index)
+        self.assertEqual({name: api.files[name] for name in old_payloads}, old_payloads)
+        for (entry, name), (_, cnb_name) in zip(cnb.asset_entries(self.manifest), cnb.asset_entries(mirror)):
+            self.assertEqual(name, cnb_name)
+            self.assertIn(entry["sha256"][:16], name)
+        client.publish(self.output, mirror, self.tag)
+        self.assertEqual(api.files["latest.json"], (self.output / "latest.json").read_bytes())
+
+    def test_checksum_named_asset_must_match_the_manifest(self):
+        self.name_payloads_by_checksum()
+        entry = self.manifest["runtimes"]["arm64-v8a"]
+        entry["url"] = entry["url"].replace(entry["sha256"][:16], "0" * 16)
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "Unexpected GitHub asset URL"):
+            self.prepare()
+
+    def test_retention_keeps_current_and_recent_payloads_per_kind(self):
+        runtimes = [f"rootfs-arm64-v8a-{i:016x}.tar.xz" for i in range(4)]
+        apks = [f"AzurPilot-Android-1.3.0-arm64-v8a-update-{i:016x}.apk" for i in range(4)]
+        assets = [{"name": name, "created_at": f"2026-11-{i + 1:02d}T00:00:00Z"}
+                  for names in (runtimes, apks) for i, name in enumerate(names)]
+        keep = cnb.retained_payload_names(assets, {runtimes[0], apks[3]})
+        self.assertEqual(keep, {runtimes[0], *runtimes[2:], *apks[1:]})
 
     def test_cleanup_removes_other_releases_tags_and_preserves_three_apk_versions(self):
         mirror = self.prepare()

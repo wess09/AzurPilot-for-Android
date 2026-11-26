@@ -28,6 +28,11 @@ RELEASE_TAG = "azurpilot-android-latest"
 SHA = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 FRONTEND = re.compile(r"frontend-[0-9a-f]{40}\.tar\.xz")
+VERSIONED_APK = re.compile(
+    r"AzurPilot-Android-\d+\.\d+\.\d+-((?:(?:arm64-v8a|x86_64)-)?(?:full|update))-[0-9a-f]{16}\.apk"
+)
+VERSIONED_RUNTIME = re.compile(r"(rootfs-(?:arm64-v8a|x86_64))-[0-9a-f]{16}\.tar\.xz")
+LEGACY_APK = re.compile(r"AzurPilot-Android-(\d+\.\d+\.\d+)-.+\.apk")
 UPLOAD_WORKERS = 3
 UPLOAD_ATTEMPT_SECONDS = 90 * 60
 UPLOAD_SOCKET_SECONDS = 120
@@ -66,7 +71,18 @@ def asset_entries(manifest: dict) -> list[tuple[dict, str]]:
         entries.append((manifest["fullApks"][abi], f"AzurPilot-Android-{version}-{abi}-full.apk"))
         if "updateApks" in manifest:
             entries.append((manifest["updateApks"][abi], f"AzurPilot-Android-{version}-{abi}-update.apk"))
-    return entries
+    resolved = []
+    for entry, legacy in entries:
+        checksum = entry.get("sha256")
+        if not isinstance(checksum, str) or not SHA256.fullmatch(checksum):
+            raise ValueError(f"Invalid asset checksum: {legacy}")
+        suffix = ".apk" if legacy.endswith(".apk") else ".tar.xz"
+        immutable = f"{legacy.removesuffix(suffix)}-{checksum[:16]}{suffix}"
+        name = unquote(entry["url"].rsplit("/", 1)[-1])
+        if name not in (legacy, immutable):
+            raise ValueError(f"Unexpected GitHub asset URL: {legacy}")
+        resolved.append((entry, name))
+    return resolved
 
 
 def validate_source_urls(manifest: dict, github_repo: str, github_tag: str) -> None:
@@ -78,10 +94,35 @@ def validate_source_urls(manifest: dict, github_repo: str, github_tag: str) -> N
     for entry, filename in asset_entries(manifest):
         if unquote(entry["url"]) != unquote(base + quote(filename, safe="")):
             raise ValueError(f"Unexpected GitHub asset URL: {filename}")
-        if not isinstance(entry.get("sha256"), str) or not SHA256.fullmatch(entry["sha256"]):
-            raise ValueError(f"Invalid asset checksum: {filename}")
         if type(entry.get("size")) is not int or entry["size"] <= 0:
             raise ValueError(f"Invalid asset size: {filename}")
+
+
+def retained_payload_names(assets: list[dict], current: set[str]) -> set[str]:
+    """保留当前下载载荷、每种带哈希附件的最近两份旧文件及最近三版旧式 APK。
+
+    Keeps the current payloads, two recent hash-named predecessors per kind and three legacy APK versions.
+    """
+    retained = set(current)
+    previous_by_kind = {}
+    legacy_by_version = {}
+    for asset in assets:
+        name = asset["name"]
+        match = VERSIONED_APK.fullmatch(name) or VERSIONED_RUNTIME.fullmatch(name)
+        if match:
+            if name not in current:
+                previous_by_kind.setdefault(match[1], []).append(asset)
+        elif match := LEGACY_APK.fullmatch(name):
+            version = tuple(map(int, match[1].split(".")))
+            legacy_by_version.setdefault(version, []).append(name)
+        elif name in {f"rootfs-{abi}.tar.xz" for abi in ABIS}:
+            retained.add(name)
+    for older in previous_by_kind.values():
+        latest = sorted(older, key=lambda asset: asset.get("created_at") or "", reverse=True)
+        retained.update(asset["name"] for asset in latest[:2])
+    for version in sorted(legacy_by_version, reverse=True)[:3]:
+        retained.update(legacy_by_version[version])
+    return retained
 
 
 def download(source: Path, github_repo: str, github_tag: str) -> None:
@@ -165,12 +206,10 @@ def prepare(source: Path, output: Path, github_repo: str, github_tag: str,
             shutil.copyfile(path, target)
     cnb = copy.deepcopy(manifest)
     base = f"{WEB_ENDPOINT}/{cnb_repo}/-/releases/download/{tag}/"
-    cnb["apkUrl"] = base + f"AzurPilot-Android-{cnb['versionName']}-update.apk"
-    for abi in ABIS:
-        cnb["runtimes"][abi]["url"] = base + f"rootfs-{abi}.tar.xz"
-        cnb["fullApks"][abi]["url"] = base + f"AzurPilot-Android-{cnb['versionName']}-{abi}-full.apk"
-        if "updateApks" in cnb:
-            cnb["updateApks"][abi]["url"] = base + f"AzurPilot-Android-{cnb['versionName']}-{abi}-update.apk"
+    (_, apk_name), *nested = asset_entries(cnb)
+    cnb["apkUrl"] = base + apk_name
+    for entry, name in nested:
+        entry["url"] = base + name
     arm64 = cnb["runtimes"]["arm64-v8a"]
     cnb.update(rootfsVersion=arm64["version"], rootfsUrl=arm64["url"],
                rootfsSha256=arm64["sha256"], rootfsSize=arm64["size"])
@@ -352,16 +391,10 @@ class CnbClient:
             if item["name"] != tag:
                 self.request("DELETE", f"{self.tags_base}/{quote(item['name'], safe='')}", missing_ok=True)
                 print(f"Removed obsolete CNB tag: {item['name']}")
-        apk_pattern = re.compile(r"AzurPilot-Android-(\d+\.\d+\.\d+)-.+\.apk")
         assets = release.get("assets") or []
-        versions = {match[1] for asset in assets
-                    if (match := apk_pattern.fullmatch(asset["name"]))}
-        retained_versions = set(sorted(versions, key=lambda value: tuple(map(int, value.split('.'))),
-                                       reverse=True)[:3])
-        retained_files = {path.name for path in output.iterdir()}
+        retained_files = retained_payload_names(assets, {path.name for path in output.iterdir()})
         for asset in assets:
-            match = apk_pattern.fullmatch(asset["name"])
-            if asset["name"] in retained_files or (match and match[1] in retained_versions):
+            if asset["name"] in retained_files:
                 continue
             self.request("DELETE", f"{self.base}/{quote(release['id'], safe='')}/assets/"
                          f"{quote(asset['id'], safe='')}", missing_ok=True)

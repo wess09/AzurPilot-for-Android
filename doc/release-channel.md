@@ -21,6 +21,8 @@
 | `rootfsVersion` / `rootfsUrl` / `rootfsSha256` / `rootfsSize` | — | 旧版兼容字段，恒指向 arm64 包 |
 
 兼容规则：旧版 App 只读扁平 `rootfs*` 字段，因此它们必须始终有效——发布脚本将其固定指向 arm64 条目。
+APK 和 Runtime 的附件名包含内容 SHA-256 的前 16 位。GitHub 与 CNB 在完整上传后更新
+固定的 `latest.json`，同步中断时旧清单仍可使用其原有附件。
 新版 App 按设备 ABI 选择 `updateApks`，防止 MuMu 把通用包切成 ARM 转译。
 旧清单缺少该字段时，x86_64 优先使用专用完整 APK，ARM64 沿用通用更新包。
 
@@ -98,6 +100,9 @@ App、双架构 Runtime 和前端归档共用下载源，大小与 SHA-256 与 G
 
 Compatibility rule: old app versions read only the flat `rootfs*` fields, so
 they must stay valid — the publish step pins them to the arm64 entry.
+APK and Runtime asset names include the first 16 characters of their SHA-256 checksum. GitHub
+and CNB update the fixed `latest.json` after uploading the complete set, so the previous index
+can still use its original payloads if a sync is interrupted.
 New apps select `updateApks` by device ABI to prevent MuMu from switching universal APKs to ARM
 translation. With older manifests, x86_64 prefers the dedicated full APK and ARM64 uses the
 universal update APK.

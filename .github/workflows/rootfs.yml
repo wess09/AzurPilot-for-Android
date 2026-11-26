@@ -472,12 +472,15 @@ jobs:
           export RUNTIME_JSON_ARM64_V8A='' RUNTIME_JSON_X86_64=''
           export FULL_JSON_ARM64_V8A='' FULL_JSON_X86_64=''
           export UPDATE_JSON_ARM64_V8A='' UPDATE_JSON_X86_64=''
+          payloads=()
+          metadata=()
           if [[ "$SIGNING_READY" == true && "$APK_BUILT" == true ]]; then
             apk="dist/azurpilot-update.apk"
             test -s "$apk"
-            asset="AzurPilot-Android-${VERSION_NAME}-update.apk"
+            sha="$(sha256sum "$apk" | awk '{print $1}')"
+            asset="AzurPilot-Android-${VERSION_NAME}-update-${sha:0:16}.apk"
             cp "$apk" "$asset"
-            sha="$(sha256sum "$asset" | awk '{print $1}')"
+            payloads+=("$asset")
             size="$(stat -c %s "$asset")"
             url="https://github.com/${GITHUB_REPOSITORY}/releases/download/azurpilot-android-latest/$asset"
             export APK_JSON
@@ -487,31 +490,37 @@ jobs:
           # arm64 包），继续指向 arm64 条目，保证旧包的运行时更新不断供。
           for abi in arm64-v8a x86_64; do
             key="$(echo "$abi" | tr 'a-z-' 'A-Z_')"
-            cp ".tmp/publish-rootfs/$abi/rootfs.tar.xz" "rootfs-$abi.tar.xz"
+            rootfs=".tmp/publish-rootfs/$abi/rootfs.tar.xz"
+            rsha="$(sha256sum "$rootfs" | awk '{print $1}')"
+            runtime_asset="rootfs-$abi-${rsha:0:16}.tar.xz"
+            cp "$rootfs" "$runtime_asset"
+            payloads+=("$runtime_asset")
             cp ".tmp/publish-rootfs/$abi/BUILD_MANIFEST" "BUILD_MANIFEST-$abi.json"
-            rsha="$(sha256sum "rootfs-$abi.tar.xz" | awk '{print $1}')"
-            rsize="$(stat -c %s "rootfs-$abi.tar.xz")"
+            metadata+=("BUILD_MANIFEST-$abi.json")
+            rsize="$(stat -c %s "$runtime_asset")"
             rversion="$(jq -r '.rootfs_version' ".tmp/publish-rootfs/$abi/BUILD_MANIFEST")"
             test -n "$rversion" && test "$rversion" != null
-            rurl="https://github.com/${GITHUB_REPOSITORY}/releases/download/azurpilot-android-latest/rootfs-$abi.tar.xz"
+            rurl="https://github.com/${GITHUB_REPOSITORY}/releases/download/azurpilot-android-latest/$runtime_asset"
             json="$(jq -n --arg version "$rversion" --arg url "$rurl" --arg sha256 "$rsha" --argjson size "$rsize" \
               '{version:$version,url:$url,sha256:$sha256,size:$size}')"
             export "RUNTIME_JSON_$key=$json"
             if [[ "$SIGNING_READY" == true && "$APK_BUILT" == true ]]; then
               full="dist/azurpilot-full-$abi.apk"
               test -s "$full"
-              full_asset="AzurPilot-Android-${VERSION_NAME}-${abi}-full.apk"
+              fsha="$(sha256sum "$full" | awk '{print $1}')"
+              full_asset="AzurPilot-Android-${VERSION_NAME}-${abi}-full-${fsha:0:16}.apk"
               cp "$full" "$full_asset"
-              fsha="$(sha256sum "$full_asset" | awk '{print $1}')"
+              payloads+=("$full_asset")
               fsize="$(stat -c %s "$full_asset")"
               furl="https://github.com/${GITHUB_REPOSITORY}/releases/download/azurpilot-android-latest/$full_asset"
               fjson="$(jq -n --arg url "$furl" --arg sha256 "$fsha" --argjson size "$fsize" '{url:$url,sha256:$sha256,size:$size}')"
               export "FULL_JSON_$key=$fjson"
               update="dist/azurpilot-update-$abi.apk"
               test -s "$update"
-              update_asset="AzurPilot-Android-${VERSION_NAME}-${abi}-update.apk"
+              usha="$(sha256sum "$update" | awk '{print $1}')"
+              update_asset="AzurPilot-Android-${VERSION_NAME}-${abi}-update-${usha:0:16}.apk"
               cp "$update" "$update_asset"
-              usha="$(sha256sum "$update_asset" | awk '{print $1}')"
+              payloads+=("$update_asset")
               usize="$(stat -c %s "$update_asset")"
               uurl="https://github.com/${GITHUB_REPOSITORY}/releases/download/azurpilot-android-latest/$update_asset"
               ujson="$(jq -n --arg url "$uurl" --arg sha256 "$usha" --argjson size "$usize" '{url:$url,sha256:$sha256,size:$size}')"
@@ -580,7 +589,6 @@ jobs:
             gh release create azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --draft \
               --title 'AzurPilot for Android 自动构建' \
               --notes '每 30 分钟检查 AzurPilot dev 更新；更新后按架构构建 rootfs 与两种签名 APK。'
-          assets=(latest.json rootfs-arm64-v8a.tar.xz rootfs-x86_64.tar.xz BUILD_MANIFEST-arm64-v8a.json BUILD_MANIFEST-x86_64.json)
           # 预构建前端资产与 ABI 无关，任取一份（arm64）。命名带上游提交，运行时
           # 旧热更服务按提交探测；新镜像已改用内置 Node.js 本地构建。旧 run 复用的产物里没有
           # 该资产时跳过上传，热更探测会视作暂不可更新，不影响发布其余资产。
@@ -588,45 +596,59 @@ jobs:
           if [[ -s ".tmp/publish-rootfs/arm64-v8a/$ftar" && -s ".tmp/publish-rootfs/arm64-v8a/$ftar.sha256" ]]; then
             cp ".tmp/publish-rootfs/arm64-v8a/$ftar" "$ftar"
             cp ".tmp/publish-rootfs/arm64-v8a/$ftar.sha256" "$ftar.sha256"
-            assets+=("$ftar" "$ftar.sha256")
+            metadata+=("$ftar" "$ftar.sha256")
           else
             echo "skip frontend dist asset: $ftar not present in artifact"
           fi
-          if [[ "$SIGNING_READY" == true && "$APK_BUILT" == true ]]; then
-            assets+=("$asset" "AzurPilot-Android-${VERSION_NAME}-arm64-v8a-full.apk" "AzurPilot-Android-${VERSION_NAME}-x86_64-full.apk")
-            assets+=("AzurPilot-Android-${VERSION_NAME}-arm64-v8a-update.apk" "AzurPilot-Android-${VERSION_NAME}-x86_64-update.apk")
+          sha256sum "${payloads[@]}" > SHA256SUMS
+          # 客户端可能仍持有上次清单。重试时也不能覆盖清单引用过的载荷。
+          release_id="$(gh release view azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --json databaseId --jq .databaseId)"
+          remote="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" | jq 'add')"
+          missing=()
+          while read -r sha name; do
+            name="${name#\*}"
+            state="$(jq -r --arg name "$name" '.[] | select(.name == $name) | .state' <<<"$remote")"
+            existing="$(jq -r --arg name "$name" '.[] | select(.name == $name) | .digest // "unknown"' <<<"$remote")"
+            if [[ "$state" == starter ]]; then
+              # GitHub 在上传失败时可能留下未发布的空附件。
+              gh release delete-asset azurpilot-android-latest "$name" --repo "$GITHUB_REPOSITORY" --yes
+              missing+=("$name")
+            elif [[ -z "$existing" ]]; then
+              missing+=("$name")
+            elif [[ "$existing" != "sha256:$sha" ]]; then
+              echo "::error::Existing release asset has an unexpected digest: $name"
+              exit 1
+            fi
+          done < SHA256SUMS
+          if (( ${#missing[@]} > 0 )); then
+            gh release upload azurpilot-android-latest "${missing[@]}" --repo "$GITHUB_REPOSITORY"
           fi
-          sha256sum "${assets[@]}" > SHA256SUMS
-          assets+=(SHA256SUMS)
-          gh release upload azurpilot-android-latest "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          sha256sum "${metadata[@]}" latest.json >> SHA256SUMS
+          gh release upload azurpilot-android-latest "${metadata[@]}" SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
+          gh release upload azurpilot-android-latest latest.json --clobber --repo "$GITHUB_REPOSITORY"
           gh release edit azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --draft=false --latest
       - name: Prune stale release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION_NAME: ${{ needs.apk.outputs.version_name }}
           AP_REF: ${{ needs.resolve.outputs.ref }}
         run: |
           set -euo pipefail
-          # 滚动 release 的 APK / frontend 资产名带版本号或上游提交，--clobber 只覆盖
-          # 同名文件，历史资产会无限堆积，而 GitHub 不会自动清理 release 资产。发布
-          # 后按名删旧：保留 latest.json、全部 rootfs-<abi>.tar.xz、当前上游提交的
-          # frontend 包（运行时热更按提交探测）与最近 3 个版本的 APK（留回滚余地）；
-          # 旧版本 APK、旧提交 frontend、多架构改造前的遗留 rootfs.tar.xz 一律删除。
-          # 未识别的文件不动，避免误删手动上传的资产。
           # frontend 提交取 BUILD_MANIFEST：复用旧 rootfs run 时它可能落后于 AP_REF，
           # 刚上传的 frontend 资产名以 BUILD_MANIFEST 为准，不能按 AP_REF 清掉。
           ap_commit="$(jq -r '.azurpilot_commit // empty' .tmp/publish-rootfs/arm64-v8a/BUILD_MANIFEST 2>/dev/null || true)"
           ap_commit="${ap_commit:-$AP_REF}"
-          assets_json="$(gh release view azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --json assets)"
-          # 现存资产里的版本号并上当前版本，取最高 3 个；版本名由提交数推出，单调递增。
-          versions="$(
-            {
-              jq -r '.assets[].name' <<<"$assets_json" |
-                sed -n 's/^AzurPilot-Android-\([0-9][0-9.]*\)-.*\.apk$/\1/p'
-              echo "$VERSION_NAME"
-            } | sort -uV | tail -n 3
-          )"
-          jq -r '.assets[].name' <<<"$assets_json" | while IFS= read -r name; do
+          assets_json="$(gh release view azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --json assets |
+            jq -c '[.assets[] | {name, created_at: .createdAt}]')"
+          # 固定清单更新后，仍保留近期清单引用过的载荷。
+          retained="$(python3 -c '
+          import json, sys
+          from tools.cnb_release import asset_entries, retained_payload_names
+
+          with open("latest.json", encoding="utf-8") as file:
+              current = {name for _, name in asset_entries(json.load(file))}
+          print("\n".join(sorted(retained_payload_names(json.load(sys.stdin), current))))
+          ' <<<"$assets_json")"
+          jq -r '.[].name' <<<"$assets_json" | while IFS= read -r name; do
             delete=false
             case "$name" in
               # 多架构改造前的扁平 rootfs 资产，latest.json 早已改指 rootfs-<abi>.tar.xz
@@ -640,9 +662,13 @@ jobs:
                 fi
                 ;;
               AzurPilot-Android-*.apk)
-                v="${name#AzurPilot-Android-}"
-                v="${v%%-*}"
-                if [[ "$v" =~ ^[0-9][0-9.]*$ ]] && ! grep -Fxq -- "$v" <<<"$versions"; then
+                if [[ "$name" =~ ^AzurPilot-Android-[0-9]+\.[0-9]+\.[0-9]+- ]] &&
+                    ! grep -Fxq -- "$name" <<<"$retained"; then
+                  delete=true
+                fi
+                ;;
+              rootfs-arm64-v8a-*.tar.xz | rootfs-x86_64-*.tar.xz)
+                if [[ "$name" =~ -[0-9a-f]{16}\.tar\.xz$ ]] && ! grep -Fxq -- "$name" <<<"$retained"; then
                   delete=true
                 fi
                 ;;
