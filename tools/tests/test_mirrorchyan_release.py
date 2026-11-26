@@ -55,7 +55,8 @@ class MirrorChyanReleaseTest(unittest.TestCase):
                           ("AzurPilotAndroidUpdate", "android", "arm64"),
                           ("AzurPilotAndroidUpdate", "android", "x86_64"),
                           ("AzurPilotAndroidUpdate", "android", ""),
-                          ("AzurPilotAndroid", "", "arm64"), ("AzurPilotAndroid", "", "x86_64")})
+                          ("AzurPilotAndroidRootfs", "", "arm64"),
+                          ("AzurPilotAndroidRootfs", "", "x86_64")})
 
     def test_rejects_missing_incomplete_or_wrong_sized_current_assets(self):
         for filename, change in (
@@ -105,7 +106,7 @@ class MirrorChyanReleaseTest(unittest.TestCase):
         rootfs = [package for package in packages if package["filename"].endswith(".tar.xz")]
         self.assertEqual({package["arch"]: package["version"] for package in rootfs},
                          {"arm64": "upstream-arm64-123", "x86_64": "upstream-x86_64-456"})
-        self.assertTrue(all(package["rid"] == "AzurPilotAndroid" and package["os"] == ""
+        self.assertTrue(all(package["rid"] == "AzurPilotAndroidRootfs" and package["os"] == ""
                             for package in rootfs))
         self.assertTrue(all(package["version"] == "1.3.238" for package in packages
                             if package["filename"].endswith(".apk")))

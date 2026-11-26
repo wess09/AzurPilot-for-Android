@@ -40,7 +40,7 @@ jobs:
       - name: Sync ARM64 rootfs release notes
         uses: MirrorChyan/release-note-action@v1
         with:
-          mirrorchyan_rid: AzurPilotAndroid
+          mirrorchyan_rid: AzurPilotAndroidRootfs
           version_name: ${{ steps.release.outputs.arm64_rootfs_version }}
           release_note: ${{ steps.release.outputs.release_note }}
           channel: stable
@@ -52,7 +52,7 @@ jobs:
         if: ${{ steps.release.outputs.x86_64_rootfs_version != steps.release.outputs.arm64_rootfs_version }}
         uses: MirrorChyan/release-note-action@v1
         with:
-          mirrorchyan_rid: AzurPilotAndroid
+          mirrorchyan_rid: AzurPilotAndroidRootfs
           version_name: ${{ steps.release.outputs.x86_64_rootfs_version }}
           release_note: ${{ steps.release.outputs.release_note }}
           channel: stable

@@ -50,7 +50,7 @@ def resolve(manifest: dict, release: dict) -> dict:
         version = entry.get("version")
         if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version):
             raise ValueError(f"Invalid rootfs version: {abi}")
-        packages.append({"rid": "AzurPilotAndroid", "os": "",
+        packages.append({"rid": "AzurPilotAndroidRootfs", "os": "",
                          "arch": "arm64" if abi == "arm64-v8a" else abi,
                          "filename": f"rootfs-{abi}.tar.xz", "version": version,
                          "sha256": entry["sha256"], "size": entry["size"]})
