@@ -15,9 +15,9 @@ import mirrorchyan_release as mirror
 
 
 class MirrorChyanReleaseTest(unittest.TestCase):
-    """防止旧 APK、错误架构或未上传完成的产物进入分发。
+    """防止旧版本、错误架构或未上传完成的 APK 和 rootfs 进入分发。
 
-    Prevents distribution of old APKs, incorrect architectures, or incomplete uploads.
+    Prevents distribution of outdated, mismatched, or incomplete APKs and rootfs archives.
     """
 
     def setUp(self):
@@ -46,17 +46,25 @@ class MirrorChyanReleaseTest(unittest.TestCase):
                                             "state": "uploaded", "size": 100})
         result = mirror.resolve(self.manifest, self.release)
         packages = json.loads(result["matrix"])["include"]
-        self.assertEqual(len(packages), 5)
-        self.assertTrue(all("1.3.238" in package["filename"] for package in packages))
-        self.assertEqual({(package["rid"], package["arch"]) for package in packages},
-                         {("AzurPilotAndroid", "arm64"), ("AzurPilotAndroid", "x86_64"),
-                          ("AzurPilotAndroidUpdate", "arm64"),
-                          ("AzurPilotAndroidUpdate", "x86_64"), ("AzurPilotAndroidUpdate", "")})
+        self.assertEqual(len(packages), 7)
+        self.assertTrue(all("1.3.238" in package["filename"] for package in packages
+                            if package["filename"].endswith(".apk")))
+        self.assertEqual({(package["rid"], package["os"], package["arch"]) for package in packages},
+                         {("AzurPilotAndroid", "android", "arm64"),
+                          ("AzurPilotAndroid", "android", "x86_64"),
+                          ("AzurPilotAndroidUpdate", "android", "arm64"),
+                          ("AzurPilotAndroidUpdate", "android", "x86_64"),
+                          ("AzurPilotAndroidUpdate", "android", ""),
+                          ("AzurPilotAndroid", "", "arm64"), ("AzurPilotAndroid", "", "x86_64")})
 
-    def test_rejects_missing_incomplete_or_wrong_sized_current_apk(self):
-        filename = "AzurPilot-Android-1.3.238-x86_64-update.apk"
-        for change in ("missing", "uploading", "size"):
-            with self.subTest(change=change):
+    def test_rejects_missing_incomplete_or_wrong_sized_current_assets(self):
+        for filename, change in (
+            (filename, change)
+            for filename in ("AzurPilot-Android-1.3.238-x86_64-update.apk",
+                             "rootfs-arm64-v8a.tar.xz", "rootfs-x86_64.tar.xz")
+            for change in ("missing", "uploading", "size")
+        ):
+            with self.subTest(filename=filename, change=change):
                 release = copy.deepcopy(self.release)
                 asset = next(item for item in release["assets"] if item["name"] == filename)
                 if change == "missing":
@@ -88,6 +96,29 @@ class MirrorChyanReleaseTest(unittest.TestCase):
         self.release["body"] = "Edited notes"
         self.manifest["fullApks"]["arm64-v8a"]["sha256"] = "b" * 64
         self.assertEqual(mirror.resolve(self.manifest, self.release)["version"], "1.3.238")
+
+    def test_rootfs_preserves_each_upstream_version_and_leaves_os_empty(self):
+        self.manifest["runtimes"]["arm64-v8a"]["version"] = "upstream-arm64-123"
+        self.manifest["runtimes"]["x86_64"]["version"] = "upstream-x86_64-456"
+        result = mirror.resolve(self.manifest, self.release)
+        packages = json.loads(result["matrix"])["include"]
+        rootfs = [package for package in packages if package["filename"].endswith(".tar.xz")]
+        self.assertEqual({package["arch"]: package["version"] for package in rootfs},
+                         {"arm64": "upstream-arm64-123", "x86_64": "upstream-x86_64-456"})
+        self.assertTrue(all(package["rid"] == "AzurPilotAndroid" and package["os"] == ""
+                            for package in rootfs))
+        self.assertTrue(all(package["version"] == "1.3.238" for package in packages
+                            if package["filename"].endswith(".apk")))
+        self.assertEqual(result["arm64_rootfs_version"], "upstream-arm64-123")
+        self.assertEqual(result["x86_64_rootfs_version"], "upstream-x86_64-456")
+
+    def test_rejects_missing_or_invalid_rootfs_versions(self):
+        for version in (None, "", 'invalid"version', "invalid\nversion"):
+            with self.subTest(version=version):
+                manifest = copy.deepcopy(self.manifest)
+                manifest["runtimes"]["arm64-v8a"]["version"] = version
+                with self.assertRaisesRegex(ValueError, "Invalid rootfs version"):
+                    mirror.resolve(manifest, self.release)
 
     def test_requires_published_rolling_release_and_supplies_nonempty_notes(self):
         for field, value in (("draft", True), ("tag_name", "v1.3.238")):

@@ -1,12 +1,13 @@
-"""从滚动 Release 清单选择当前 APK，避免混入历史版本。
+"""从滚动 Release 清单选择当前 APK 和 rootfs，避免混入历史版本。
 
-Selects the current APKs from the rolling release manifest, excluding historical versions.
+Selects the current APKs and rootfs archives from the rolling release manifest.
 """
 
 import argparse
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import uuid
 
@@ -17,9 +18,9 @@ SOURCE_REPO = "wess09/AzurPilot-for-Android"
 
 
 def resolve(manifest: dict, release: dict) -> dict:
-    """校验五个当前 APK，沿用清单中的上游版本号。
+    """校验五个 APK 和两个 rootfs，分别沿用清单中的上游版本号。
 
-    Validates the five current APKs and preserves the upstream manifest version.
+    Validates five APKs and two rootfs archives, preserving their upstream versions.
     """
     if release["tag_name"] != cnb.RELEASE_TAG or release.get("draft"):
         raise ValueError("MirrorChyan must use the published rolling release")
@@ -41,14 +42,28 @@ def resolve(manifest: dict, release: dict) -> dict:
     packages.append({"rid": "AzurPilotAndroidUpdate", "os": "android", "arch": "",
                      "filename": f"AzurPilot-Android-{manifest['versionName']}-update.apk",
                      "sha256": manifest["apkSha256"], "size": manifest["apkSize"]})
+    for package in packages:
+        package["version"] = manifest["versionName"]
+
+    for abi in cnb.ABIS:
+        entry = manifest["runtimes"][abi]
+        version = entry.get("version")
+        if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", version):
+            raise ValueError(f"Invalid rootfs version: {abi}")
+        packages.append({"rid": "AzurPilotAndroid", "os": "",
+                         "arch": "arm64" if abi == "arm64-v8a" else abi,
+                         "filename": f"rootfs-{abi}.tar.xz", "version": version,
+                         "sha256": entry["sha256"], "size": entry["size"]})
 
     available = {asset["name"]: asset for asset in release["assets"]}
     for package in packages:
         asset = available.get(package["filename"])
         if not asset or asset["state"] != "uploaded" or asset["size"] != package["size"]:
-            raise ValueError(f"Current APK is missing or incomplete: {package['filename']}")
+            raise ValueError(f"Current release asset is missing or incomplete: {package['filename']}")
 
     return {"version": manifest["versionName"], "matrix": json.dumps({"include": packages}),
+            "arm64_rootfs_version": manifest["runtimes"]["arm64-v8a"]["version"],
+            "x86_64_rootfs_version": manifest["runtimes"]["x86_64"]["version"],
             "release_note": release.get("body") or f"AzurPilot for Android {manifest['versionName']}"}
 
 
@@ -66,9 +81,9 @@ def write_outputs(values: dict, output: Path) -> None:
 
 
 def main() -> None:
-    """读取上游已发布清单，不下载历史 APK 或重新构建。
+    """读取上游已发布清单，不下载历史产物或重新构建。
 
-    Reads the published upstream manifest without downloading historical APKs or rebuilding.
+    Reads the published upstream manifest without downloading historical assets or rebuilding.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", default=cnb.RELEASE_TAG)
@@ -91,7 +106,8 @@ def main() -> None:
     write_outputs(outputs, args.output)
     print(f"MirrorChyan version: {outputs['version']}")
     for package in json.loads(outputs["matrix"])["include"]:
-        print(f"{package['filename']} -> {package['rid']} / {package['os']} / {package['arch']}")
+        print(f"{package['filename']} -> {package['rid']} / {package['os']} / "
+              f"{package['arch']} / {package['version']}")
 
 
 if __name__ == "__main__":

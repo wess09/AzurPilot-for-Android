@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Rolling release tag; uploads only the APKs referenced by latest.json
+        description: Rolling release tag; uploads only the APKs and rootfs referenced by latest.json
         default: azurpilot-android-latest
         required: false
         type: string
@@ -18,13 +18,12 @@ jobs:
     if: ${{ github.repository_owner == 'wess09' }}
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.release.outputs.version }}
       matrix: ${{ steps.release.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - name: Verify rolling release selection
         run: python3 tools/tests/test_mirrorchyan_release.py
-      - name: Resolve current APKs
+      - name: Resolve current release assets
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -39,7 +38,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
     steps:
-      - name: Download and verify the selected APK
+      - name: Download and verify the selected asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FILENAME: ${{ matrix.filename }}
@@ -55,7 +54,7 @@ jobs:
         with:
           filetype: local
           filename: downloads/${{ matrix.filename }}
-          version_name: ${{ needs.resolve.outputs.version }}
+          version_name: ${{ matrix.version }}
           mirrorchyan_rid: ${{ matrix.rid }}
           os: ${{ matrix.os }}
           arch: ${{ matrix.arch }}

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Rolling release tag; uses versionName from latest.json
+        description: Rolling release tag; uses APK and runtime versions from latest.json
         default: azurpilot-android-latest
         required: false
         type: string
@@ -31,6 +31,29 @@ jobs:
         with:
           mirrorchyan_rid: AzurPilotAndroid
           version_name: ${{ steps.release.outputs.version }}
+          release_note: ${{ steps.release.outputs.release_note }}
+          channel: stable
+          owner: wess09
+          repo: AzurPilot-for-Android
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
+      - name: Sync ARM64 rootfs release notes
+        uses: MirrorChyan/release-note-action@v1
+        with:
+          mirrorchyan_rid: AzurPilotAndroid
+          version_name: ${{ steps.release.outputs.arm64_rootfs_version }}
+          release_note: ${{ steps.release.outputs.release_note }}
+          channel: stable
+          owner: wess09
+          repo: AzurPilot-for-Android
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
+      - name: Sync x86_64 rootfs release notes when its version differs
+        if: ${{ steps.release.outputs.x86_64_rootfs_version != steps.release.outputs.arm64_rootfs_version }}
+        uses: MirrorChyan/release-note-action@v1
+        with:
+          mirrorchyan_rid: AzurPilotAndroid
+          version_name: ${{ steps.release.outputs.x86_64_rootfs_version }}
           release_note: ${{ steps.release.outputs.release_note }}
           channel: stable
           owner: wess09
