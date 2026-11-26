@@ -432,6 +432,9 @@ jobs:
     needs: [resolve, build, apk]
     if: ${{ always() && needs.resolve.outputs.should_build == 'true' && needs.resolve.outputs.publish == 'true' && (needs.build.result == 'success' || inputs.reuse_rootfs_run_id != '') && needs.apk.result == 'success' }}
     runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: write
     concurrency:
       group: cnb-release-publish
       cancel-in-progress: false
@@ -627,6 +630,23 @@ jobs:
           gh release upload azurpilot-android-latest "${metadata[@]}" SHA256SUMS --clobber --repo "$GITHUB_REPOSITORY"
           gh release upload azurpilot-android-latest latest.json --clobber --repo "$GITHUB_REPOSITORY"
           gh release edit azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --draft=false --latest
+      - name: Trigger MirrorChyan upload
+        if: ${{ github.repository == 'wess09/AzurPilot-for-Android' && github.ref == 'refs/heads/main' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for attempt in 1 2 3; do
+            if gh workflow run mirrorchyan_release.yml --repo "$GITHUB_REPOSITORY" \
+              --ref main -f tag=azurpilot-android-latest; then
+              exit 0
+            fi
+            if (( attempt < 3 )); then
+              sleep "$((attempt * 5))"
+            fi
+          done
+          echo "::warning::MirrorChyan dispatch failed. Run mirrorchyan_release.yml on main to retry."
+          exit 1
       - name: Prune stale release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

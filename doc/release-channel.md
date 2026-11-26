@@ -87,9 +87,10 @@ Runtime 完整包的下载。CDK 以掩码显示，保存在应用的免备份�
 
 [官方接入 PR #49](https://github.com/wess09/AzurPilot-for-Android/pull/49) 使用
 `AzurPilotAndroid`、`AzurPilotAndroidUpdate` 和 `AzurPilotAndroidRootfs`。
-`tools/mirrorchyan_release.py` 从已发布的清单选择这三类资源，支持带 SHA 后缀的新附件名。
-启用 PR 中的发布流程前，需要配置 GitHub Secret `MirrorChyanUploadToken`，并使用启用了
-TLS 证书验证的官方上传与说明同步动作。
+`tools/mirrorchyan_release.py` 从已发布的清单选择这三类资源，支持带 SHA 后缀的附件名。
+GitHub 发布完成后会触发 `mirrorchyan_release.yml`，校验并上传七个包，再同步发布说明。
+重新同步时可在主分支手动运行该工作流。发布凭证保存在 GitHub Secret `MirrorChyanUploadToken`，
+固定版本的官方 Actions 使用仓库内启用 TLS 证书校验的脚本。
 
 ### 签名
 
@@ -192,9 +193,10 @@ fails. Frontend archives use the selected source.
 [Official onboarding PR #49](https://github.com/wess09/AzurPilot-for-Android/pull/49) defines
 `AzurPilotAndroid`, `AzurPilotAndroidUpdate`, and `AzurPilotAndroidRootfs`.
 `tools/mirrorchyan_release.py` selects those assets from the published manifest, including
-current SHA-suffixed names. Before enabling the PR's publishing workflows, configure the
-GitHub secret `MirrorChyanUploadToken` and use official upload and release-note actions with
-TLS certificate verification enabled.
+SHA-suffixed names. After GitHub publication, `mirrorchyan_release.yml` verifies and uploads
+all seven packages, then syncs the release notes. Run this workflow on `main` to retry a sync.
+The pinned official actions use local scripts that verify TLS certificates. The upload
+credential is stored in the GitHub secret `MirrorChyanUploadToken`.
 
 ### Signing
 

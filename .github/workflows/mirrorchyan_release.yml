@@ -1,0 +1,84 @@
+name: mirrorchyan_release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Rolling release tag; uploads only the APKs and rootfs referenced by latest.json
+        default: azurpilot-android-latest
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: mirrorchyan-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: ${{ github.repository == 'wess09/AzurPilot-for-Android' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.release.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify rolling release selection
+        run: python3 tools/tests/test_mirrorchyan_release.py
+      - name: Resolve current release assets
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: python3 tools/mirrorchyan_release.py --tag "$RELEASE_TAG"
+
+  mirrorchyan:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Download and verify the selected asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FILENAME: ${{ matrix.filename }}
+          SHA256: ${{ matrix.sha256 }}
+          SIZE: ${{ matrix.size }}
+        run: |
+          set -euo pipefail
+          gh release download azurpilot-android-latest --repo wess09/AzurPilot-for-Android \
+            --pattern "$FILENAME" --dir downloads
+          test "$(stat -c %s "downloads/$FILENAME")" = "$SIZE"
+          printf '%s  %s\n' "$SHA256" "downloads/$FILENAME" | sha256sum --check
+      - name: Prepare the TLS-verifying uploader
+        run: |
+          cp tools/mirrorchyan/upload.py mirrorchyan_uploading.py
+          test -s mirrorchyan_uploading.py
+          python -m pip install requests
+      - uses: MirrorChyan/uploading-action@4230465d8cf5331da0523a3551518e1a88fe666b # v1
+        with:
+          filetype: local
+          filename: downloads/${{ matrix.filename }}
+          version_name: ${{ matrix.version }}
+          mirrorchyan_rid: ${{ matrix.rid }}
+          os: ${{ matrix.os }}
+          arch: ${{ matrix.arch }}
+          channel: stable
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
+
+  release-notes:
+    needs: mirrorchyan
+    uses: ./.github/workflows/mirrorchyan_release_note.yml
+    with:
+      tag: ${{ inputs.tag }}
+    secrets:
+      MirrorChyanUploadToken: ${{ secrets.MirrorChyanUploadToken }}

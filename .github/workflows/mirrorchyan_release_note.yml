@@ -1,0 +1,96 @@
+name: mirrorchyan_release_note
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Rolling release tag; uses APK and runtime versions from latest.json
+        default: azurpilot-android-latest
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+    secrets:
+      MirrorChyanUploadToken:
+        required: true
+  release:
+    types: [edited]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: mirrorchyan-release-note
+  cancel-in-progress: true
+
+jobs:
+  mirrorchyan:
+    if: ${{ github.repository == 'wess09/AzurPilot-for-Android' && (github.ref == 'refs/heads/main' || (github.event_name == 'release' && github.event.release.tag_name == 'azurpilot-android-latest')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # 旧滚动标签可能早于本工作流；编辑发布说明时从主分支取脚本。
+          ref: ${{ github.event_name == 'release' && 'refs/heads/main' || github.sha }}
+          persist-credentials: false
+      - name: Resolve current release notes
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: python3 tools/mirrorchyan_release.py --tag "$RELEASE_TAG"
+      - name: Prepare the TLS-verifying release note uploader
+        id: prepare
+        run: |
+          cp tools/mirrorchyan/release_note.py mirrorchyan_release_note.py
+          test -s mirrorchyan_release_note.py
+          python -m pip install aiohttp
+      - uses: MirrorChyan/release-note-action@5bf59f3b46948f2cfd10d55996110834c33cdee0 # v1
+        with:
+          mirrorchyan_rid: AzurPilotAndroid
+          version_name: ${{ steps.release.outputs.version }}
+          release_note: ${{ steps.release.outputs.release_note }}
+          channel: stable
+          owner: wess09
+          repo: AzurPilot-for-Android
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
+      - name: Sync ARM64 rootfs release notes
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        uses: MirrorChyan/release-note-action@5bf59f3b46948f2cfd10d55996110834c33cdee0 # v1
+        with:
+          mirrorchyan_rid: AzurPilotAndroidRootfs
+          version_name: ${{ steps.release.outputs.arm64_rootfs_version }}
+          release_note: ${{ steps.release.outputs.release_note }}
+          channel: stable
+          owner: wess09
+          repo: AzurPilot-for-Android
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
+      - name: Sync x86_64 rootfs release notes when its version differs
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.release.outputs.x86_64_rootfs_version != steps.release.outputs.arm64_rootfs_version }}
+        uses: MirrorChyan/release-note-action@5bf59f3b46948f2cfd10d55996110834c33cdee0 # v1
+        with:
+          mirrorchyan_rid: AzurPilotAndroidRootfs
+          version_name: ${{ steps.release.outputs.x86_64_rootfs_version }}
+          release_note: ${{ steps.release.outputs.release_note }}
+          channel: stable
+          owner: wess09
+          repo: AzurPilot-for-Android
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
+      - name: Sync slim APK release notes
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
+        uses: MirrorChyan/release-note-action@5bf59f3b46948f2cfd10d55996110834c33cdee0 # v1
+        with:
+          mirrorchyan_rid: AzurPilotAndroidUpdate
+          version_name: ${{ steps.release.outputs.version }}
+          release_note: ${{ steps.release.outputs.release_note }}
+          channel: stable
+          owner: wess09
+          repo: AzurPilot-for-Android
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
