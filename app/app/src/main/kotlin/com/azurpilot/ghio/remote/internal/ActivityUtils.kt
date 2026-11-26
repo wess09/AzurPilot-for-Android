@@ -63,12 +63,12 @@ object ActivityUtils {
     var forceFullscreenOnVirtualDisplay: Boolean = false
 
     /**
-     * 最近一次经桥启动的包名（已拆成纯包名）；[SdkTaskRepatriator] 用它判断
-     * 「自动化会话已开始」并排除游戏本体，虚拟屏停止时由 [SdkTaskRepatriator.stop] 清空
+     * 最近一次经桥启动到虚拟屏的包名；[SdkTaskRepatriator] 用它识别本次会话的游戏。
+     * 虚拟屏停止时由 [SdkTaskRepatriator.stop] 清空。
      *
      * The most recent package launched through the bridge (flattened to a plain package name);
-     * [SdkTaskRepatriator] uses it to tell "an automation session has started" and to exclude
-     * the game itself, and [SdkTaskRepatriator.stop] clears it when the virtual display stops.
+     * [SdkTaskRepatriator] uses the last virtual-display launch to identify the current game.
+     * [SdkTaskRepatriator.stop] clears it when the virtual display stops.
      */
     @Volatile
     var lastLaunchedPackage: String? = null
@@ -210,7 +210,9 @@ object ActivityUtils {
             }
         }
         Ln.i("startApp ${intent.component?.flattenToShortString()}")
-        lastLaunchedPackage = targetPackage
+        lastLaunchedPackage = targetPackage.takeIf {
+            displayId != Display.DEFAULT_DISPLAY && displayId == VirtualDisplayManager.getDisplayId()
+        }
 
         return startActivity(intent, displayId)
     }
@@ -408,7 +410,8 @@ object ActivityUtils {
                 TaskOnDisplay(
                     taskId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) task.taskId else task.id,
                     displayId = getTaskDisplayId(task),
-                    topPackage = task.topActivity?.packageName
+                    topPackage = task.topActivity?.packageName,
+                    basePackage = task.baseActivity?.packageName,
                 )
             }
         }.onFailure { Ln.w("snapshotRunningTasks: failed", it) }.getOrNull()
@@ -418,7 +421,8 @@ object ActivityUtils {
     data class TaskOnDisplay(
         val taskId: Int,
         val displayId: Int,
-        val topPackage: String?
+        val topPackage: String?,
+        val basePackage: String?,
     )
 
     /** 隐藏 API 搬任务，失败再试 am 命令 / Moves the task via the hidden API, falling back to the am command */

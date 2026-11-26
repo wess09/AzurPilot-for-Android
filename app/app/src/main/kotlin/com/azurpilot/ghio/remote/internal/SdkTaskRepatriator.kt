@@ -26,13 +26,9 @@ import kotlinx.coroutines.launch
  * 游戏等不到登录回调就永远停在触发页（issue #8：vivo 服弹不出登录界面；
  * 类原生 ROM 上同一页面能正常落在虚拟屏，可作对照）。
  *
- * 策略：游戏任务自身的漂移由启动校验（ensureAppOnDisplay）与 AppWatchdog 负责，本对象
- * 只盯**主屏上新出现或换了顶层包**的任务：顶层包命中渠道 SDK / 厂商系统包白名单、或就是
- * 游戏包名自身——渠道 SDK 的 Activity 打包在游戏 APK 内（如 vivo 服碧蓝航线
- * com.bilibili.blhx.vivo 里的 com.vivo.* 登录页），组件包名与游戏一致，落回主屏时顶层包名
- * 看起来就是「游戏本身」，旧版恰在此把它放走（issue #8 修复后复测仍卡的原因）——又不是
- * 宿主 App 与桌面，且游戏任务确实在虚拟屏上时，搬到虚拟屏。只动增量、每任务搬回次数有上限
- * （ROM 可能对抗重定向），用户自己打开的旧应用与桌面一律不碰。
+ * 记录在虚拟屏见过的游戏任务，整任务漂移或登录页重建任务时凭该记录搬回。游戏仍在虚拟屏时也检查
+ * 新出现或换了顶层包的渠道弹页，包括与游戏同包的弹页。桌面、宿主和主屏存量任务不搬移，
+ * 每个任务有重试上限。
  *
  * 线程模型：start/stop 由 binder 线程调用；单协程跑在 AppDispatchers.IO
  * limitedParallelism(1) 上，每秒一拍；已见任务表与已搬计数局限在本协程，
@@ -50,19 +46,10 @@ import kotlinx.coroutines.launch
  * callback (issue #8: the vivo-server login never shows; on near-AOSP ROMs the
  * same page lands on the virtual display fine, which serves as a control).
  *
- * Policy: drift of the game task itself is the launch-time check's job
- * (ensureAppOnDisplay) plus the AppWatchdog. This watcher only looks at tasks
- * **newly appeared or top-changed** on the primary display: when the top package
- * hits the channel-SDK / vendor-system allowlist **or is the game package
- * itself** — channel-SDK activities are packaged inside the game APK (the
- * com.vivo.* login pages inside the vivo-server AzurLane package
- * com.bilibili.blhx.vivo, say), so their component package equals the game's and
- * a stranded page's top package reads exactly like "the game", which the old
- * exclusion let slip (why the issue #8 fix still failed on retest) — and is
- * neither the host app nor a launcher, and the game task is actually on the
- * virtual display, the task is moved over. Only increments are touched, moves
- * per task are capped (the ROM may redirect back in a fight), and apps the user
- * opened themselves and the launcher are never touched.
+ * Remembers game tasks observed on the virtual display and brings them back if they drift or
+ * login creates another game task. While the game is on the virtual display, it checks SDK pages,
+ * including pages packaged in the game APK. It excludes home, the host app, and existing
+ * primary-display tasks and limits attempts per task.
  *
  * Threading: start/stop run on binder threads; a single coroutine on
  * AppDispatchers.IO limitedParallelism(1) ticks every second; the seen-task
@@ -110,14 +97,15 @@ object SdkTaskRepatriator {
     private val scope = CoroutineScope(SupervisorJob() + AppDispatchers.IO.limitedParallelism(1))
     private var job: Job? = null
 
-    /** 基线是否已建立；首拍只记录不搬 / Whether the baseline is primed; the first tick only records */
-    private var primed = false
-
-    /** 已见主屏任务：taskId -> 顶层包名 / Tasks seen on the primary display: taskId -> top package */
-    private val seen = HashMap<Int, String?>()
-
-    /** 已搬过的任务与次数：taskId -> 已搬次数，到 [MAX_MOVES_PER_TASK] 为止 / Moved tasks with counts: taskId -> times moved, up to [MAX_MOVES_PER_TASK] */
-    private val movedCount = HashMap<Int, Int>()
+    /** 单个显示器的轮询记录。 / Polling state for one display. */
+    private class Watch(val displayId: Int) {
+        var primed = false
+        var target: String? = null
+        var observedGame = false
+        val gameTasks = mutableSetOf<Int>()
+        val seen = mutableMapOf<Int, String?>()
+        val attempts = mutableMapOf<Int, Int>()
+    }
 
     /**
      * 各家 ROM 桌面（含 vivo 的 com.bbk.launcher2，恰好落在厂商前缀白名单内，
@@ -144,107 +132,79 @@ object SdkTaskRepatriator {
      */
     fun start() {
         stop()
-        primed = false
-        seen.clear()
-        movedCount.clear()
         Ln.i("SdkTaskRepatriator: start")
         job = scope.launch {
+            var watch = Watch(DefaultDisplayConfig.DISPLAY_NONE)
             while (isActive) {
-                delay(POLL_INTERVAL_MS)
-                runCatching { tick() }.onFailure {
-                    Ln.w("SdkTaskRepatriator: tick failed: ${it.message}")
+                val displayId = VirtualDisplayManager.getDisplayId()
+                if (displayId != watch.displayId) watch = Watch(displayId)
+                if (displayId != DefaultDisplayConfig.DISPLAY_NONE) {
+                    runCatching { tick(watch) }.onFailure {
+                        Ln.w("SdkTaskRepatriator: tick failed: ${it.message}")
+                    }
                 }
+                delay(POLL_INTERVAL_MS)
             }
         }
     }
 
-    /** 停止轮询并清状态；顺带清掉「游戏已启动」标记，见 [ActivityUtils.lastLaunchedPackage] */
+    /** 停止轮询并清空会话目标。 / Stops polling and clears the session target. */
     fun stop() {
         job?.cancel()
         job = null
         ActivityUtils.lastLaunchedPackage = null
     }
 
-    /**
-     * 单拍：虚拟屏不在或快照失败时静默等下一拍；基线未建立则先记录存量任务。
-     * 游戏任务不在虚拟屏上（未启动 / 已死）时不做任何搬移。
-     */
-    private fun tick() {
-        val displayId = VirtualDisplayManager.getDisplayId()
-        if (displayId == DefaultDisplayConfig.DISPLAY_NONE) {
-            primed = false
-            seen.clear()
-            return
-        }
-        val tasks = runCatching { ActivityUtils.snapshotRunningTasks() }.getOrNull() ?: return
+    private fun tick(watch: Watch) {
+        val tasks = ActivityUtils.snapshotRunningTasks() ?: return
         val onPrimary = tasks.filter { it.displayId == Display.DEFAULT_DISPLAY }
+        val target = ActivityUtils.lastLaunchedPackage
+        if (target != watch.target) {
+            watch.target = target
+            watch.observedGame = false
+            watch.gameTasks.clear()
+            watch.attempts.clear()
+        }
+        val onVirtual = if (target == null) emptyList() else tasks.filter {
+            it.displayId == watch.displayId && (it.topPackage == target || it.basePackage == target)
+        }
+        if (onVirtual.isNotEmpty()) watch.observedGame = true
+        watch.gameTasks.retainAll(tasks.mapTo(mutableSetOf()) { it.taskId })
+        onVirtual.mapTo(watch.gameTasks) { it.taskId }
 
-        if (!primed) {
-            // 基线快照：盯防开始前已在主屏的任务一律视为存量，不搬——
-            // 桌面、用户手开的应用都在其中
-            onPrimary.forEach { seen[it.taskId] = it.topPackage }
-            primed = true
+        if (!watch.primed) {
+            onPrimary.forEach { watch.seen[it.taskId] = it.topPackage }
+            watch.primed = true
             return
         }
 
-        val target = ActivityUtils.lastLaunchedPackage
-        val gameOnVirtualDisplay = target != null &&
-                tasks.any { it.displayId == displayId && it.topPackage == target }
+        watch.seen.keys.retainAll(onPrimary.mapTo(mutableSetOf()) { it.taskId })
         for (task in onPrimary) {
             val pkg = task.topPackage
-            val prev = seen.put(task.taskId, pkg)
-            // 出现判定：新任务、换了顶层包，或是被我们搬回后又被 ROM 重定向回主屏
-            // Appeared: a new task, a top-package change, or a moved task the ROM sent back
-            val appeared = prev == null || (pkg != null && pkg != prev) || task.taskId in movedCount
-            if (!appeared) continue
-            if (pkg == null || !gameOnVirtualDisplay || !qualifies(pkg, target)) {
-                Ln.d("SdkTaskRepatriator: task ${task.taskId} ($pkg) on the primary display, ignored")
-                continue
-            }
-            val attempts = movedCount.getOrDefault(task.taskId, 0)
-            if (attempts >= MAX_MOVES_PER_TASK) {
-                // 放手即清计数：留着会因「taskId in movedCount」每拍都判成新出现而刷屏；
-                // 顶层包再变（任务里换了新页）时仍会经 appeared 重新进来重新计数
-                movedCount.remove(task.taskId)
-                Ln.w(
-                    "SdkTaskRepatriator: task $pkg (id=${task.taskId}) returned to the primary " +
-                    "display $attempts times, giving up to avoid a tug-of-war"
-                )
-                continue
-            }
+            val previous = watch.seen.put(task.taskId, pkg)
+            if (pkg == null || target == null || pkg == BuildConfig.APPLICATION_ID || pkg in homePackages) continue
+            val attempts = watch.attempts.getOrDefault(task.taskId, 0)
+            if (attempts >= MAX_MOVES_PER_TASK) continue
+
+            val appeared = pkg != previous || attempts > 0
+            // 登录可能重建游戏任务，虚拟屏空时也要接回已确认会话里的同包新任务。
+            val gameTask = pkg == target || task.basePackage == target
+            val drifted = gameTask && (task.taskId in watch.gameTasks || (watch.observedGame && appeared))
+            val sdkPopup = onVirtual.isNotEmpty() && appeared &&
+                SDK_PACKAGE_PREFIXES.any { pkg.startsWith(it) }
+            if (!drifted && !sdkPopup) continue
+
+            if (VirtualDisplayManager.getDisplayId() != watch.displayId ||
+                ActivityUtils.lastLaunchedPackage != target
+            ) return
+            watch.attempts[task.taskId] = attempts + 1
             Ln.w(
-                "SdkTaskRepatriator: SDK/game task $pkg (id=${task.taskId}) appeared on the " +
-                "primary display while the game runs on the virtual display, moving it back " +
-                "(attempt ${attempts + 1}/$MAX_MOVES_PER_TASK)"
+                "SdkTaskRepatriator: moving $pkg (id=${task.taskId}) to display ${watch.displayId} " +
+                    "(attempt ${attempts + 1}/$MAX_MOVES_PER_TASK)"
             )
-            if (runCatching { ActivityUtils.moveTaskById(task.taskId, displayId) }.getOrDefault(false)) {
-                movedCount[task.taskId] = attempts + 1
-            } else {
-                Ln.e("SdkTaskRepatriator: failed to move task ${task.taskId} ($pkg) to display $displayId")
+            if (!ActivityUtils.moveTaskById(task.taskId, watch.displayId)) {
+                Ln.e("SdkTaskRepatriator: failed to move task ${task.taskId} ($pkg) to display ${watch.displayId}")
             }
         }
-    }
-
-    /**
-     * 白名单 + 排除项判定。**游戏包名自身的任务要收**：渠道 SDK 的 Activity 打包在游戏
-     * APK 内，组件包名就是游戏包名（vivo 服碧蓝航线 com.bilibili.blhx.vivo 里的
-     * com.vivo.* 登录页），落回主屏时顶层包名与游戏本体一模一样——旧版在此放走它，
-     * 是 issue #8 修复后复测仍卡的原因。「游戏不在虚拟屏」的 gate 已挡掉无会话场景，
-     * 用户在主屏手开游戏前虚拟屏上必然先有游戏任务。
-     *
-     * Allowlist and exclusion check. Tasks of the game package itself ARE collected:
-     * channel-SDK activities are packaged inside the game APK, so their component
-     * package is the game's own package (the com.vivo.* login pages inside the
-     * vivo-server AzurLane com.bilibili.blhx.vivo), and a stranded page's top package
-     * reads exactly like the game itself — the old exclusion let it slip, which is why
-     * issue #8 still failed on retest. The "game on the virtual display" gate already
-     * screened the no-session case: the game task exists on the virtual display before
-     * the user could open the game on the primary display by hand.
-     */
-    private fun qualifies(pkg: String, target: String?): Boolean {
-        if (target == null) return false // 游戏还没经桥启动过，不存在 SDK 弹页，一律不碰
-        if (pkg == BuildConfig.APPLICATION_ID) return false // 宿主 App 自己 / the host app itself
-        if (pkg in homePackages) return false // 桌面 / the launcher
-        return pkg == target || SDK_PACKAGE_PREFIXES.any { pkg.startsWith(it) }
     }
 }

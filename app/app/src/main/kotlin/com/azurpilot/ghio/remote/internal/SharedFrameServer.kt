@@ -40,7 +40,6 @@ object SharedFrameServer {
     private const val MAX_CLIENTS = 8
     private const val MAX_BYTES = 32 * 1024 * 1024
     private const val MAX_LINE = 4096
-    private const val IDLE_TIMEOUT_MS = 60_000
 
     /**
      * screencap 首帧重试预算：VD (重)建后游戏首帧尚未渲染（native 帧计数归零），客户端单次
@@ -135,7 +134,7 @@ object SharedFrameServer {
         var memory: SharedMemory? = null
         var mapping: ByteBuffer? = null
         try {
-            socket.soTimeout = IDLE_TIMEOUT_MS
+            // SharedFrameHost 已在 App 域设置超时；交付后 shell 域可能无 setopt 权限。
             val input = BufferedInputStream(socket.inputStream)
             val output = socket.outputStream
             while (true) {
