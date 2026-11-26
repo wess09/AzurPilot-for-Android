@@ -1,0 +1,63 @@
+name: mirrorchyan_release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Rolling release tag; uploads only the APKs referenced by latest.json
+        default: azurpilot-android-latest
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  resolve:
+    if: ${{ github.repository_owner == 'wess09' }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      matrix: ${{ steps.release.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify rolling release selection
+        run: python3 tools/tests/test_mirrorchyan_release.py
+      - name: Resolve current APKs
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: python3 tools/mirrorchyan_release.py --tag "$RELEASE_TAG"
+
+  mirrorchyan:
+    if: ${{ github.repository_owner == 'wess09' }}
+    needs: resolve
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    steps:
+      - name: Download and verify the selected APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FILENAME: ${{ matrix.filename }}
+          SHA256: ${{ matrix.sha256 }}
+          SIZE: ${{ matrix.size }}
+        run: |
+          set -euo pipefail
+          gh release download azurpilot-android-latest --repo wess09/AzurPilot-for-Android \
+            --pattern "$FILENAME" --dir downloads
+          test "$(stat -c %s "downloads/$FILENAME")" = "$SIZE"
+          printf '%s  %s\n' "$SHA256" "downloads/$FILENAME" | sha256sum --check
+      - uses: MirrorChyan/uploading-action@v1
+        with:
+          filetype: local
+          filename: downloads/${{ matrix.filename }}
+          version_name: ${{ needs.resolve.outputs.version }}
+          mirrorchyan_rid: ${{ matrix.rid }}
+          os: ${{ matrix.os }}
+          arch: ${{ matrix.arch }}
+          channel: stable
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}

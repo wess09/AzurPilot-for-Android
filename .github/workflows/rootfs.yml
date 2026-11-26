@@ -432,6 +432,9 @@ jobs:
     needs: [resolve, build, apk]
     if: ${{ always() && needs.resolve.outputs.should_build == 'true' && needs.resolve.outputs.publish == 'true' && (needs.build.result == 'success' || inputs.reuse_rootfs_run_id != '') && needs.apk.result == 'success' }}
     runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: write
     concurrency:
       group: cnb-release-publish
       cancel-in-progress: false
@@ -600,6 +603,12 @@ jobs:
           assets+=(SHA256SUMS)
           gh release upload azurpilot-android-latest "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
           gh release edit azurpilot-android-latest --repo "$GITHUB_REPOSITORY" --draft=false --latest
+      - name: Trigger MirrorChyanUploading
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run --repo "$GITHUB_REPOSITORY" mirrorchyan_release.yml -f tag=azurpilot-android-latest
+          gh workflow run --repo "$GITHUB_REPOSITORY" mirrorchyan_release_note.yml -f tag=azurpilot-android-latest
       - name: Prune stale release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
