@@ -5,6 +5,7 @@ Mirrors verified GitHub release artifacts to CNB without rebuilding or re-signin
 
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
 import json
@@ -27,6 +28,9 @@ RELEASE_TAG = "azurpilot-android-latest"
 SHA = re.compile(r"[0-9a-f]{40}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 FRONTEND = re.compile(r"frontend-[0-9a-f]{40}\.tar\.xz")
+UPLOAD_WORKERS = 3
+UPLOAD_ATTEMPT_SECONDS = 90 * 60
+UPLOAD_SOCKET_SECONDS = 120
 
 
 def digest(path: Path, algorithm: str = "sha256") -> str:
@@ -187,6 +191,22 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
+class _UploadStream:
+    """限制单次上传耗时，避免慢连接一直绕过 socket 超时。
+
+    Bounds an upload attempt even when a slow connection keeps the socket active.
+    """
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.deadline = time.monotonic() + UPLOAD_ATTEMPT_SECONDS
+
+    def read(self, size=-1):
+        if time.monotonic() >= self.deadline:
+            raise TimeoutError("CNB upload exceeded its time budget")
+        return self.stream.read(size)
+
+
 class CnbClient:
     """按官方 Release API 流式上传，在全部校验后发布草稿。
 
@@ -263,11 +283,11 @@ class CnbClient:
             try:
                 with path.open("rb") as stream:
                     # 签名地址自带授权，不能把 CNB_TOKEN 转发到对象存储。
-                    request = Request(upload_url, data=stream, method="PUT", headers={
+                    request = Request(upload_url, data=_UploadStream(stream), method="PUT", headers={
                         "Content-Type": "application/octet-stream",
                         "Content-Length": str(path.stat().st_size),
                     })
-                    with self.opener.open(request, timeout=900) as response:
+                    with self.opener.open(request, timeout=UPLOAD_SOCKET_SECONDS) as response:
                         response.read(1024)
                 self.request("POST", verify_url)
                 return
@@ -372,22 +392,31 @@ class CnbClient:
             })
         release_id = release["id"]
         existing = {asset["name"]: asset for asset in (release.get("assets") or [])}
-        for path in sorted(output.iterdir(), key=lambda item: (item.name == "latest.json", item.name)):
-            if path.name == "latest.json":
-                self.verify(self.request("GET", f"{self.base}/{quote(release_id, safe='')}"),
-                            output, include_index=False)
+
+        def upload_if_changed(path):
             asset = existing.get(path.name)
             if (asset and asset.get("size") == path.stat().st_size
                     and (asset.get("hash_algo") or "").lower().replace("-", "") == "sha256"
                     and (asset.get("hash_value") or "").lower() == digest(path)):
-                continue
+                return
             print(f"Upload {path.name} ({path.stat().st_size} bytes)", flush=True)
             self.upload(release_id, path)
-        complete = self.request("GET", f"{self.base}/{quote(release_id, safe='')}")
+
+        # 独立附件并发上传，避免单个 GB 级安装包拖住所有附件；清单仍最后提交。
+        index = output / "latest.json"
+        assets = sorted((path for path in output.iterdir() if path != index),
+                        key=lambda path: path.stat().st_size, reverse=True)
+        with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as pool:
+            for _ in pool.map(upload_if_changed, assets):
+                pass
+        release_url = f"{self.base}/{quote(release_id, safe='')}"
+        self.verify(self.request("GET", release_url), output, include_index=False)
+        upload_if_changed(index)
+        complete = self.request("GET", release_url)
         self.verify(complete, output)
-        self.request("PATCH", f"{self.base}/{quote(release_id, safe='')}",
+        self.request("PATCH", release_url,
                      {**metadata, "draft": False, "make_latest": "true"})
-        published = self.request("GET", f"{self.base}/{quote(release_id, safe='')}")
+        published = self.request("GET", release_url)
         self.verify(published, output)
         self.prune(published, output, tag)
 

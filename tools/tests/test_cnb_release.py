@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from threading import Barrier, Lock
 import unittest
 from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
@@ -30,6 +31,7 @@ class FakeApi:
         self.files = {}
         self.confirmed = set()
         self.tickets = {}
+        self.ticket_lock = Lock()
         self.fail_upload = False
         self.corrupt_remote = False
         self.existing = None
@@ -72,8 +74,9 @@ class FakeApi:
             body = json.loads(request.data)
             assert body["overwrite"] is True and body["ttl"] == 0
             filename = body["asset_name"]
-            ticket = f"ticket-{len(self.tickets)}"
-            self.tickets[ticket] = filename
+            with self.ticket_lock:
+                ticket = f"ticket-{len(self.tickets)}"
+                self.tickets[ticket] = filename
             result = {"upload_url": f"https://storage.example/{filename}",
                       "verify_url": (f"/{self.confirmation_repo}/-/releases/release-1/"
                                      f"asset-upload-confirmation/{ticket}/asset")}
@@ -279,6 +282,38 @@ class CnbReleaseTest(unittest.TestCase):
         self.assertIn("PATCH", methods)
         self.assertEqual(api.confirmed, {path.name for path in self.output.iterdir()})
         self.assertEqual(api.files["latest.json"], (self.output / "latest.json").read_bytes())
+
+    def test_large_assets_upload_in_parallel_before_index(self):
+        mirror = self.prepare()
+        api = FakeApi()
+        paths = sorted(self.output.iterdir(), key=lambda path: path.stat().st_size, reverse=True)
+        parallel = {path.name for path in [path for path in paths if path.name != "latest.json"][:2]}
+        barrier = Barrier(2)
+        original_open = api.open
+
+        def open_request(request, timeout):
+            if request.get_method() == "PUT":
+                name = request.full_url.rsplit("/", 1)[-1]
+                if name in parallel:
+                    barrier.wait(timeout=5)
+                if name == "latest.json":
+                    self.assertEqual(api.confirmed, {path.name for path in paths} - {name})
+            return original_open(request, timeout)
+
+        with patch.object(api, "open", side_effect=open_request):
+            cnb.CnbClient("test-access-token", cnb.CNB_REPOSITORY, api).publish(
+                self.output, mirror, self.tag)
+        self.assertIn("latest.json", api.confirmed)
+
+    def test_expired_transfer_retries_without_publishing_it(self):
+        api = FakeApi()
+        path = self.source / "latest.json"
+        client = cnb.CnbClient("test-access-token", cnb.CNB_REPOSITORY, api)
+        with patch.object(cnb, "UPLOAD_ATTEMPT_SECONDS", 0), patch.object(cnb.time, "sleep"):
+            with self.assertRaisesRegex(RuntimeError, "failed after 3 attempts"):
+                client.upload("release-1", path)
+        self.assertEqual(len(api.tickets), 3)
+        self.assertFalse(api.confirmed)
 
     def test_failed_upload_or_remote_checksum_leaves_a_draft(self):
         mirror = self.prepare()
