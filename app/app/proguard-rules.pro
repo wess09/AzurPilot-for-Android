@@ -53,6 +53,13 @@
     <init>();
 }
 
+# WorkManager 从数据库读取类名，反射构造 InputMerger。
+-keep class * extends androidx.work.InputMerger { <init>(); }
+
+# Glance 按接收器类名构造实例，并把类名作为组件映射和会话键。
+-keep class * extends androidx.glance.appwidget.GlanceAppWidgetReceiver { <init>(); }
+-keep class * extends androidx.glance.appwidget.GlanceAppWidget { <init>(); }
+
 # ── 落盘的 enum 常量名 ──
 # AppSettings 以 name 存进 DataStore，回读走 valueOf；RunLogKind 按 name 进会话日志文件。
 # 改名不会报错，只会让 valueOf 抛异常后静默回落到默认值——用户的设置一次性全丢

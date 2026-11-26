@@ -44,15 +44,23 @@ internal val R8_CRITICAL_CLASSES = setOf(
  * Room 2.2.5 的 consumer rule 只保留 [androidx.room.RoomDatabase] 实现类名，
  * WorkManager 却用反射调用 [androidx.work.impl.WorkDatabase_Impl] 的无参构造器。
  * 若构造器被裁掉，应用会在 androidx.startup 初始化阶段直接闪退。
+ * WorkManager 反射加载输入合并器，Glance 反射加载接收器并用类名注册组件会话。
  *
  * No-argument constructors R8 must retain.
  *
  * Room 2.2.5's consumer rule retains only [androidx.room.RoomDatabase] implementation
  * class names, while WorkManager reflectively calls [androidx.work.impl.WorkDatabase_Impl]'s
  * no-argument constructor. Removing it crashes the app during androidx.startup initialization.
+ * WorkManager reflectively loads its input merger. Glance loads receivers by name and registers
+ * widget sessions under class names.
  */
 internal val R8_CRITICAL_NO_ARG_CONSTRUCTORS = setOf(
     "androidx.work.impl.WorkDatabase_Impl",
+    "androidx.work.OverwritingInputMerger",
+    "com.azurpilot.ghio.widget.AzurPilotControlWidget",
+    "com.azurpilot.ghio.widget.AzurPilotControlWidgetReceiver",
+    "com.azurpilot.ghio.widget.AzurPilotQuickWidget",
+    "com.azurpilot.ghio.widget.AzurPilotQuickWidgetReceiver",
 )
 
 /**
@@ -124,7 +132,6 @@ abstract class VerifyR8KeepsTask : DefaultTask() {
             broken += "$handleClass.handle was removed or renamed"
         }
         criticalNoArgConstructors.get().forEach { name ->
-            val constructor = "    0:3:void <init>():"
             val classStart = lines.indexOf("$name -> $name:")
             val classEnd = if (classStart < 0) -1 else lines.subList(classStart + 1, lines.size)
                 .indexOfFirst { line -> !line.startsWith(" ") && line.endsWith(":") }
