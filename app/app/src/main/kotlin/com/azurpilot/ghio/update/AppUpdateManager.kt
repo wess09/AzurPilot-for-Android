@@ -38,6 +38,7 @@ data class AppUpdateInfo(
     val apkUrl: String,
     val apkSha256: String,
     val apkSize: Long,
+    internal val mirrorResource: MirrorChyanResource = MirrorChyanResource.UPDATE_UNIVERSAL,
 )
 
 /**
@@ -47,8 +48,9 @@ data class AppUpdateInfo(
  * so emulator installers cannot switch the app to ARM translation.
  */
 internal fun parseAppUpdateInfo(json: JSONObject, abi: String?): AppUpdateInfo? {
-    val artifact = json.optJSONObject("updateApks")?.optJSONObject(abi.orEmpty())
-        ?: if (abi == RuntimeArch.X86_64) json.optJSONObject("fullApks")?.optJSONObject(abi) else null
+    val slim = json.optJSONObject("updateApks")?.optJSONObject(abi.orEmpty())
+    val full = if (abi == RuntimeArch.X86_64) json.optJSONObject("fullApks")?.optJSONObject(abi) else null
+    val artifact = slim ?: full
     if (artifact == null && !json.has("apkUrl")) return null
     return AppUpdateInfo(
         versionCode = json.getInt("versionCode"),
@@ -56,6 +58,11 @@ internal fun parseAppUpdateInfo(json: JSONObject, abi: String?): AppUpdateInfo? 
         apkUrl = artifact?.getString("url") ?: json.getString("apkUrl"),
         apkSha256 = artifact?.getString("sha256") ?: json.getString("apkSha256"),
         apkSize = artifact?.getLong("size") ?: json.getLong("apkSize"),
+        mirrorResource = when {
+            slim != null -> MirrorChyanResource.updateApk(abi)
+            full != null -> MirrorChyanResource.FULL_X86_64
+            else -> MirrorChyanResource.UPDATE_UNIVERSAL
+        },
     ).also {
         require(ReleaseUrls.isReleaseUrl(it.apkUrl))
         require(it.apkSha256.matches(Regex("[0-9a-f]{64}")))
@@ -105,6 +112,7 @@ class AppUpdateManager(
     private val context: Context,
     private val scope: CoroutineScope,
     private val settings: AppSettingsManager,
+    private val mirrorChyan: MirrorChyan,
 ) {
     private val _state = MutableStateFlow(AppUpdateState())
 
@@ -133,13 +141,17 @@ class AppUpdateManager(
         val current = _state.value
         if (current.checking || current.downloading) return
         if (!_state.compareAndSet(current, current.copy(checking = true, error = null))) return
+        val abi = RuntimeArch.deviceAbi()
+        val defaultResource = MirrorChyanResource.updateApk(abi)
+        mirrorChyan.check(defaultResource)
         scope.launch(AppDispatchers.IO) {
             runCatching {
                 val indexUrl = ReleaseUrls.selected(ReleaseUrls.INDEX, downloadSource())
                 val body = requestText("$indexUrl?t=${System.currentTimeMillis()}")
                 val json = JSONObject(body)
-                parseAppUpdateInfo(json, RuntimeArch.deviceAbi())
+                parseAppUpdateInfo(json, abi)
             }.onSuccess { info ->
+                info?.mirrorResource?.takeIf { it != defaultResource }?.let(mirrorChyan::check)
                 _state.update {
                     it.copy(checking = false, available = info?.takeIf { candidate ->
                         candidate.versionCode > BuildConfig.VERSION_CODE
@@ -195,18 +207,23 @@ class AppUpdateManager(
                     val partial = File(dir, "${info.apkSha256}.apk.part")
                     partial.delete()
                     try {
-                        val downloadUrl = ReleaseUrls.selected(info.apkUrl, downloadSource())
-                        ReleaseDownloader.download(
-                            downloadUrl,
-                            partial,
-                            totalBytes = info.apkSize,
-                            onProgress = { done, total ->
-                                _state.update { it.copy(downloadedBytes = done, totalBytes = total) }
-                            },
+                        val progress: (Long, Long) -> Unit = { done, total ->
+                            _state.update { it.copy(downloadedBytes = done, totalBytes = total, verifying = false) }
+                        }
+                        val downloaded = mirrorChyan.download(
+                            info.mirrorResource, info.versionName, info.apkSize, info.apkSha256, partial,
+                            onVerify = { _state.update { it.copy(verifying = true) } },
+                            onProgress = progress,
                         )
-                        _state.update { it.copy(verifying = true) }
-                        require(partial.length() == info.apkSize) { "APK 大小校验失败" }
-                        require(sha256Hex(partial) == info.apkSha256) { "APK 校验失败" }
+                        if (!downloaded) {
+                            ReleaseDownloader.download(
+                                ReleaseUrls.selected(info.apkUrl, downloadSource()), partial,
+                                totalBytes = info.apkSize, onProgress = progress,
+                            )
+                            _state.update { it.copy(verifying = true) }
+                            require(partial.length() == info.apkSize) { "APK 大小校验失败" }
+                            require(sha256Hex(partial) == info.apkSha256) { "APK 校验失败" }
+                        }
                         require(partial.renameTo(target)) { "无法保存更新安装包" }
                     } finally {
                         partial.delete()

@@ -19,6 +19,7 @@ import com.azurpilot.ghio.ui.components.AppSymbol
 import com.azurpilot.ghio.provision.ProvisionState
 import com.azurpilot.ghio.theme.AppTokens
 import com.azurpilot.ghio.ui.components.MirrorSourcePicker
+import com.azurpilot.ghio.ui.components.MirrorChyanSettingsButton
 import com.azurpilot.ghio.ui.components.AnimatedTransferIcon
 import com.azurpilot.ghio.ui.components.TransferStage
 import com.azurpilot.ghio.ui.ksu.AppButton as Button
@@ -185,6 +186,7 @@ fun ProvisionScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
+                MirrorChyanSettingsButton()
             }
         }
     }

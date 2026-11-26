@@ -75,6 +75,22 @@ App、双架构 Runtime 和前端归档共用下载源，大小与 SHA-256 与 G
 设置存储：`github_mirror`（`cnb` / `direct` / 镜像前缀 / `custom`）与
 `github_mirror_custom`；旧版布尔开关 `use_github_mirror=true` 自动迁移为 ghproxy.net。
 
+### Mirror 酱加速
+
+在「设置 → Runtime」或首次部署页打开「Mirror 酱加速」，保存 CDK 后即可加速 APK 和
+Runtime 完整包的下载。CDK 以掩码显示，保存在应用的免备份目录中。启用后，即使未填写 CDK，
+应用也会异步查询 Mirror 酱的公开版本。
+
+应用以 GitHub/CNB 的 `latest.json` 判定要安装的版本和包。Mirror 酱返回的包须匹配清单中的
+版本、大小和 SHA-256，落盘后再次校验。未同步、CDK 不可用或下载校验失败时，会尝试设置中
+所选的下载源。前端归档继续使用原下载源。
+
+[官方接入 PR #49](https://github.com/wess09/AzurPilot-for-Android/pull/49) 使用
+`AzurPilotAndroid`、`AzurPilotAndroidUpdate` 和 `AzurPilotAndroidRootfs`。
+`tools/mirrorchyan_release.py` 从已发布的清单选择这三类资源，支持带 SHA 后缀的新附件名。
+启用 PR 中的发布流程前，需要配置 GitHub Secret `MirrorChyanUploadToken`，并使用启用了
+TLS 证书验证的官方上传与说明同步动作。
+
 ### 签名
 
 - 正式包用 Release keystore（GitHub Secrets），v1+v2+v3 全开；CI 发布前用
@@ -160,6 +176,25 @@ ghproxy form; `ReleaseUrls.normalizeCustom` sanitizes it, and invalid input
 falls back to direct). Storage: `github_mirror` (`cnb` / `direct` / a mirror prefix /
 `custom`) plus `github_mirror_custom`; the legacy boolean
 `use_github_mirror=true` migrates to ghproxy.net automatically.
+
+### MirrorChyan acceleration
+
+Open **MirrorChyan acceleration** in **Settings → Runtime** or on the initial setup screen.
+Saving a CDK enables faster downloads for whole APK and Runtime packages. The app masks the
+CDK and stores it in its no-backup directory. While acceleration is enabled, the app checks
+MirrorChyan's public version asynchronously even when no CDK is set.
+
+GitHub/CNB's `latest.json` determines the version and package to install. MirrorChyan must
+report the same version, size, and SHA-256. The app verifies the downloaded bytes again and
+tries the selected source if the mirror is out of sync, the CDK is unavailable, or verification
+fails. Frontend archives use the selected source.
+
+[Official onboarding PR #49](https://github.com/wess09/AzurPilot-for-Android/pull/49) defines
+`AzurPilotAndroid`, `AzurPilotAndroidUpdate`, and `AzurPilotAndroidRootfs`.
+`tools/mirrorchyan_release.py` selects those assets from the published manifest, including
+current SHA-suffixed names. Before enabling the PR's publishing workflows, configure the
+GitHub secret `MirrorChyanUploadToken` and use official upload and release-note actions with
+TLS certificate verification enabled.
 
 ### Signing
 

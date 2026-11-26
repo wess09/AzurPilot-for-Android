@@ -84,6 +84,7 @@ import com.azurpilot.ghio.ui.components.AppSymbol
 import com.azurpilot.ghio.ui.components.AppSymbolIcon
 import com.azurpilot.ghio.ui.components.AppActionLabel
 import com.azurpilot.ghio.ui.components.MirrorSourcePicker
+import com.azurpilot.ghio.ui.components.MirrorChyanSettingsButton
 import com.azurpilot.ghio.ui.components.ScreenSaverSettingsCard
 import com.azurpilot.ghio.ui.ksu.AppButton as Button
 import com.azurpilot.ghio.ui.ksu.AppDialog as AlertDialog
@@ -1639,6 +1640,7 @@ fun RuntimeSettingsPage(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            MirrorChyanSettingsButton()
             Button(
                 onClick = updateManager::check,
                 enabled = !updateState.downloading,

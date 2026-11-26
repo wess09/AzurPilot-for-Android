@@ -5,6 +5,8 @@ import android.os.Build
 import android.system.Os
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.update.DownloadAborted
+import com.azurpilot.ghio.update.MirrorChyan
+import com.azurpilot.ghio.update.MirrorChyanResource
 import com.azurpilot.ghio.update.ReleaseDownloader
 import com.azurpilot.ghio.update.ReleaseUrls
 import com.azurpilot.ghio.update.sha256Hex
@@ -134,6 +136,7 @@ class RootfsProvisioner(
     private val app: Application,
     private val scope: CoroutineScope,
     private val settings: AppSettingsManager,
+    private val mirrorChyan: MirrorChyan,
 ) {
 
     private val _state = MutableStateFlow<ProvisionState>(ProvisionState.Checking)
@@ -153,6 +156,7 @@ class RootfsProvisioner(
         scope.launch(Dispatchers.IO) {
             runCatching {
                 val abi = RuntimeArch.deviceAbi() ?: throw IOException("设备架构不受支持")
+                mirrorChyan.check(MirrorChyanResource.runtime(abi))
                 parseRuntime(fetchIndex(), abi)?.version
             }.onSuccess { version ->
                 val result = RuntimeUpdateCheck(
@@ -211,7 +215,13 @@ class RootfsProvisioner(
      *
      * One Runtime entry in the release manifest.
      */
-    internal data class ReleaseRuntime(val version: String, val url: String, val sha256: String, val size: Long)
+    internal data class ReleaseRuntime(
+        val version: String,
+        val url: String,
+        val sha256: String,
+        val size: Long,
+        val mirrorResource: MirrorChyanResource,
+    )
 
     /**
      * 按 ABI 解析 Release 清单。新式清单是 `runtimes: { <abi>: {version,url,sha256,size} }`；
@@ -239,7 +249,7 @@ class RootfsProvisioner(
             require(ReleaseUrls.isReleaseUrl(url)) { "运行时下载地址无效" }
             require(sha.matches(SHA256)) { "运行时校验值无效" }
             require(size > 0) { "运行时大小无效" }
-            return ReleaseRuntime(version, url, sha, size)
+            return ReleaseRuntime(version, url, sha, size, MirrorChyanResource.runtime(abi))
         }
         if (abi != RuntimeArch.ARM64 || !info.has("rootfsVersion")) return null
         val version = info.getString("rootfsVersion")
@@ -250,7 +260,7 @@ class RootfsProvisioner(
         require(sha.matches(SHA256)) { "运行时校验值无效" }
         val size = info.getLong("rootfsSize")
         require(size > 0) { "运行时大小无效" }
-        return ReleaseRuntime(version, url, sha, size)
+        return ReleaseRuntime(version, url, sha, size, MirrorChyanResource.RUNTIME_ARM64)
     }
 
     /**
@@ -542,7 +552,6 @@ class RootfsProvisioner(
                     _state.value = ProvisionState.Downloading(0, runtime.size)
                 }
             }
-            check(sha256Hex(archive).equals(runtime.sha256, ignoreCase = true)) { "rootfs 下载校验失败" }
             extract({ archive.inputStream() }, runtime.size, runtime.version)
             Timber.i("rootfs installed from release: ${runtime.version}")
         } finally { archive.delete() }
@@ -550,11 +559,10 @@ class RootfsProvisioner(
     }
 
     /**
-     * 分段下载并自动回退，进度直推状态机；SHA-256 由调用方在完成后统一校验。
-     * 在 IO 调度器上执行。
+     * 下载并校验完整 Runtime，进度直推状态机。在 IO 调度器上执行。
      *
-     * Segmented download with automatic fallback and progress pushed straight into the state
-     * machine; the caller verifies SHA-256 after completion. Runs on the IO dispatcher.
+     * Downloads and verifies the whole Runtime, pushing progress to the state machine.
+     * Runs on the IO dispatcher.
      *
      * @throws DownloadAborted 下载途中换了源 / when the mirror source switches
      *   mid-download
@@ -565,19 +573,27 @@ class RootfsProvisioner(
         target: File,
         onProgress: ((done: Long, total: Long) -> Unit)? = null,
     ) {
-        val downloadUrl = ReleaseUrls.selected(runtime.url, prefix)
-        ReleaseDownloader.download(
-            url = downloadUrl,
-            target = target,
-            shouldAbort = { sourceSwitched(prefix) },
-            totalBytes = runtime.size,
-        ) { done, total ->
+        val progress: (Long, Long) -> Unit = { done, total ->
             if (onProgress != null) {
                 onProgress(done, total)
             } else if (total > 0) {
                 _state.value = ProvisionState.Downloading(done, total)
             }
         }
+        val abort = { sourceSwitched(prefix) }
+        if (mirrorChyan.download(
+                runtime.mirrorResource, runtime.version, runtime.size, runtime.sha256, target,
+                shouldAbort = abort, onProgress = progress,
+            )
+        ) return
+        ReleaseDownloader.download(
+            url = ReleaseUrls.selected(runtime.url, prefix),
+            target = target,
+            shouldAbort = abort,
+            totalBytes = runtime.size,
+            onProgress = progress,
+        )
+        check(sha256Hex(target).equals(runtime.sha256, ignoreCase = true)) { "rootfs 下载校验失败" }
     }
 
     /**

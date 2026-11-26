@@ -9,7 +9,6 @@ import com.azurpilot.ghio.proot.ProotHost
 import com.azurpilot.ghio.proot.ProotPhase
 import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.update.DownloadAborted
-import com.azurpilot.ghio.update.sha256Hex
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -260,7 +259,7 @@ class RuntimeAutoUpdater(
             provisioner.prepareUpdate()
             provisioner.checkDisk()
 
-            // 1. 下载 rootfs 归档
+            // 1. 下载并校验 rootfs 归档
             while (true) {
                 val prefix = provisioner.downloadSource()
                 try {
@@ -276,12 +275,7 @@ class RuntimeAutoUpdater(
                 }
             }
 
-            // 2. 校验 SHA-256
-            check(sha256Hex(archive).equals(runtime.sha256, ignoreCase = true)) {
-                "rootfs 下载校验失败：sha256 不匹配"
-            }
-
-            // 3. 解压到 staging 目录 rootfs.tmp
+            // 2. 解压到 staging 目录 rootfs.tmp
             _state.value = AutoUpdateState.Extracting(0, runtime.size)
             staged = true
             provisioner.extractToStaging({ archive.inputStream() }, runtime.size, runtime.version) { read, total ->
@@ -289,7 +283,7 @@ class RuntimeAutoUpdater(
             }
             archive.delete()
 
-            // 4. 通知运行时挂起活跃实例并写入 reloadalas 恢复清单。
+            // 3. 通知运行时挂起活跃实例并写入 reloadalas 恢复清单。
             // 挂起失败必须中止：suspend 同时负责写复活清单，硬着头皮换目录会把
             // 运行中的调度器连根杀掉且更新后不再复活
             _state.value = AutoUpdateState.Suspending
@@ -298,14 +292,14 @@ class RuntimeAutoUpdater(
                 throw IOException("运行时挂起失败，为保住运行中的任务已中止本次更新")
             }
 
-            // 5. 停止旧会话并原子替换 rootfs
+            // 4. 停止旧会话并原子替换 rootfs
             _state.value = AutoUpdateState.Swapping
             stoppingRuntime = true
             prootHost.stopAndAwait()
             provisioner.commitStaging()
             swapped = true
 
-            // 6. 启动新版本并探活体检
+            // 5. 启动新版本并探活体检
             _state.value = AutoUpdateState.Verifying
             prootHost.ensureStarted()
             if (!prootHost.awaitServices(HEALTH_CHECK_TIMEOUT_MS)) {

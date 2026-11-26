@@ -1058,4 +1058,21 @@
     <string name="ap_flow_sankey">Resource flows</string>
     <string name="ap_flow_stock">From stock</string>
     <string name="ap_flow_balance">Net surplus</string>
+    <string name="mirrorchyan_title">MirrorChyan acceleration</string>
+    <string name="mirrorchyan_description">Save a CDK to speed up APK and Runtime downloads. If MirrorChyan is unavailable, the selected source is used.</string>
+    <string name="mirrorchyan_enabled">Enable acceleration</string>
+    <string name="mirrorchyan_cdk">MirrorChyan CDK</string>
+    <string name="mirrorchyan_remove">Remove CDK</string>
+    <string name="mirrorchyan_get_cdk">Get a CDK</string>
+    <string name="mirrorchyan_save_failed">Couldn’t save. Try again.</string>
+    <string name="mirrorchyan_used">The last download used MirrorChyan.</string>
+    <string name="mirrorchyan_not_synced">MirrorChyan has yet to sync this package. Using the selected source.</string>
+    <string name="mirrorchyan_unavailable">MirrorChyan has no compatible package. Using the selected source.</string>
+    <string name="mirrorchyan_failed">MirrorChyan download failed. Using the selected source.</string>
+    <string name="mirrorchyan_expired">Your CDK has expired. Renew it on MirrorChyan.</string>
+    <string name="mirrorchyan_invalid">Invalid CDK. Check the key and save it again.</string>
+    <string name="mirrorchyan_quota">Your CDK has reached the daily download limit.</string>
+    <string name="mirrorchyan_wrong_resource">This CDK does not cover the requested package.</string>
+    <string name="mirrorchyan_blocked">This CDK is blocked. Contact MirrorChyan support.</string>
+    <string name="mirrorchyan_test_key">Test CDKs cannot download packages. Use a regular CDK.</string>
 </resources>

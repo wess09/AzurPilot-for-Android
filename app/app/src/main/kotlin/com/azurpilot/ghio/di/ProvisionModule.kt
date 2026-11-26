@@ -13,7 +13,7 @@ import org.koin.dsl.module
  * Provisioning binding: the [RootfsProvisioner] and [RuntimeAutoUpdater] singletons.
  */
 val provisionModule = module {
-    single { RootfsProvisioner(androidApplication(), get(named<AppCoroutineScope>()), get<AppSettingsManager>()) }
+    single { RootfsProvisioner(androidApplication(), get(named<AppCoroutineScope>()), get<AppSettingsManager>(), get()) }
     single {
         RuntimeAutoUpdater(
             app = androidApplication(),

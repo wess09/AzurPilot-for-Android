@@ -1041,4 +1041,21 @@
     <string name="ap_flow_sankey">資源の流れ</string>
     <string name="ap_flow_stock">在庫から補填</string>
     <string name="ap_flow_balance">期間内の余剰</string>
+    <string name="mirrorchyan_title">MirrorChyan 高速ダウンロード</string>
+    <string name="mirrorchyan_description">CDK を保存すると APK と Runtime のダウンロードが高速になります。MirrorChyan を利用できない場合は選択した配信元を使用します。</string>
+    <string name="mirrorchyan_enabled">高速化を有効にする</string>
+    <string name="mirrorchyan_cdk">MirrorChyan CDK</string>
+    <string name="mirrorchyan_remove">CDK を削除</string>
+    <string name="mirrorchyan_get_cdk">CDK を取得</string>
+    <string name="mirrorchyan_save_failed">保存できませんでした。再試行してください。</string>
+    <string name="mirrorchyan_used">前回のダウンロードには MirrorChyan を使用しました。</string>
+    <string name="mirrorchyan_not_synced">MirrorChyan での同期を待っています。選択した配信元を使用します。</string>
+    <string name="mirrorchyan_unavailable">MirrorChyan に対応するパッケージがありません。選択した配信元を使用します。</string>
+    <string name="mirrorchyan_failed">MirrorChyan からのダウンロードに失敗しました。選択した配信元を使用します。</string>
+    <string name="mirrorchyan_expired">CDK の有効期限が切れました。MirrorChyan で更新してください。</string>
+    <string name="mirrorchyan_invalid">CDK が無効です。確認して保存し直してください。</string>
+    <string name="mirrorchyan_quota">CDK の 1 日あたりのダウンロード上限に達しました。</string>
+    <string name="mirrorchyan_wrong_resource">この CDK は対象のパッケージに対応していません。</string>
+    <string name="mirrorchyan_blocked">CDK はブロックされています。MirrorChyan のサポートにお問い合わせください。</string>
+    <string name="mirrorchyan_test_key">テスト用 CDK ではダウンロードできません。通常の CDK を使用してください。</string>
 </resources>

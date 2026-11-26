@@ -20,6 +20,7 @@ import com.azurpilot.ghio.settings.AppSettingsManager
 import com.azurpilot.ghio.report.DeviceReportClient
 import com.azurpilot.ghio.ui.shortcut.ShortcutRequests
 import com.azurpilot.ghio.update.AppUpdateManager
+import com.azurpilot.ghio.update.MirrorChyan
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -80,7 +81,8 @@ val coreModule = module {
     single<AppSettingsGateway> { get<AppSettingsManager>() }
 
     single { LocalizedTextRenderer(androidContext()) }
-    single { AppUpdateManager(androidContext(), get(named<AppCoroutineScope>()), get<AppSettingsManager>()) }
+    single { MirrorChyan(androidContext(), get(named<AppCoroutineScope>())) }
+    single { AppUpdateManager(androidContext(), get(named<AppCoroutineScope>()), get<AppSettingsManager>(), get()) }
     single { KeepAliveManager(androidContext(), get(), get(named<AppCoroutineScope>())) }
     single { AppLockManager(get()) }
     single<LicenseRepository> { AssetLicenseRepository(androidContext()) }

@@ -1057,4 +1057,21 @@
     <string name="ap_flow_sankey">资源流向</string>
     <string name="ap_flow_stock">动用库存</string>
     <string name="ap_flow_balance">区间结余</string>
+    <string name="mirrorchyan_title">Mirror 酱加速</string>
+    <string name="mirrorchyan_description">保存 CDK 即可加速下载 APK 和 Runtime。无法加速时，自动使用所选下载源。</string>
+    <string name="mirrorchyan_enabled">启用加速</string>
+    <string name="mirrorchyan_cdk">Mirror 酱 CDK</string>
+    <string name="mirrorchyan_remove">移除 CDK</string>
+    <string name="mirrorchyan_get_cdk">获取 CDK</string>
+    <string name="mirrorchyan_save_failed">保存失败，请重试。</string>
+    <string name="mirrorchyan_used">上次下载已使用 Mirror 酱。</string>
+    <string name="mirrorchyan_not_synced">Mirror 酱尚未同步当前包，已切换下载源。</string>
+    <string name="mirrorchyan_unavailable">Mirror 酱暂无适用的包，已切换下载源。</string>
+    <string name="mirrorchyan_failed">Mirror 酱下载失败，已切换下载源。</string>
+    <string name="mirrorchyan_expired">CDK 已过期，可前往 Mirror 酱续费。</string>
+    <string name="mirrorchyan_invalid">CDK 无效，请检查后重新保存。</string>
+    <string name="mirrorchyan_quota">CDK 今日下载次数已达上限。</string>
+    <string name="mirrorchyan_wrong_resource">此 CDK 不适用于当前下载包。</string>
+    <string name="mirrorchyan_blocked">CDK 已被封禁，请联系 Mirror 酱客服。</string>
+    <string name="mirrorchyan_test_key">测试 CDK 无法下载，请使用正式 CDK。</string>
 </resources>
