@@ -85,13 +85,16 @@ internal class OcrTrace(context: Context) {
     }
 
     /** 同步落盘；日志失败不阻止推理。 / Flushes to disk without failing inference on log errors. */
-    fun record(hash: String, stage: String, message: String? = null) {
+    fun record(hash: String, stage: String, message: String? = null,
+        phase: String? = null, returnCode: Long? = null) {
         val entry = buildJsonObject {
             put("timestamp_ms", System.currentTimeMillis())
             put("pid", Process.myPid())
             put("app_version", BuildConfig.VERSION_NAME)
             put("model_sha256", hash)
             put("stage", stage)
+            phase?.let { put("phase", it) }
+            returnCode?.let { put("return_code", it) }
             message?.let { put("message", it.take(300)) }
         }
         latest = entry

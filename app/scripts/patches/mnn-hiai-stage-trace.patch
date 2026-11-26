@@ -1,0 +1,87 @@
+--- a/source/backend/hiai/include/MNNHiAIBackend.h
++++ b/source/backend/hiai/include/MNNHiAIBackend.h
+@@ -6,0 +7 @@
++#include <stdbool.h>
+@@ -42,0 +44,2 @@
++    void (*traceStage)(void*, const char*, bool, int64_t);
++    void* traceContext;
+--- a/source/backend/hiai/backend/HiAIBackendConfig.hpp
++++ b/source/backend/hiai/backend/HiAIBackendConfig.hpp
+@@ -21,0 +22,8 @@
++}
++
++inline void traceHiAIStage(MNNHiAIDiagnosticsV1* out, const char* stage, bool finished = false,
++                           int64_t code = 0) {
++    if (out != nullptr && out->structSize >= sizeof(*out) &&
++        out->version == MNN_HIAI_CONFIG_VERSION && out->traceStage != nullptr) {
++        out->traceStage(out->traceContext, stage, finished, code);
++    }
+--- a/source/backend/hiai/backend/NPUBackend.cpp
++++ b/source/backend/hiai/backend/NPUBackend.cpp
+@@ -346 +346,2 @@
+-    shared_ptr<hiai::AiModelMngerClient> LoadModelSync(domi::ModelBufferData modelBufferData, string model_name)
++    shared_ptr<hiai::AiModelMngerClient> LoadModelSync(domi::ModelBufferData modelBufferData, string model_name,
++                                                        MNNHiAIDiagnosticsV1* diagnostics)
+@@ -347,0 +349 @@
++        traceHiAIStage(diagnostics, "hiai_model_client_create");
+@@ -348,0 +351 @@
++        traceHiAIStage(diagnostics, "hiai_model_client_create", true, mngerClient == nullptr);
+@@ -353,0 +357 @@
++        traceHiAIStage(diagnostics, "hiai_model_client_init");
+@@ -354,0 +359 @@
++        traceHiAIStage(diagnostics, "hiai_model_client_init", true, ret);
+@@ -360,0 +366 @@
++        traceHiAIStage(diagnostics, "hiai_model_buffer");
+@@ -361,0 +368 @@
++        traceHiAIStage(diagnostics, "hiai_model_buffer", true, buffer == nullptr);
+@@ -373,0 +381 @@
++        traceHiAIStage(diagnostics, "hiai_model_load");
+@@ -374,0 +383 @@
++        traceHiAIStage(diagnostics, "hiai_model_load", true, ret);
+@@ -1091,0 +1101,2 @@
++        auto* diagnostics = mNPURuntime->mHiAIOptions != nullptr
++            ? mNPURuntime->mHiAIOptions->diagnostics : nullptr;
+@@ -1100 +1111 @@
+-            mMgrClient = LoadModelSync(om_model_buff, modelName);
++            mMgrClient = LoadModelSync(om_model_buff, modelName, diagnostics);
+@@ -1129,0 +1141 @@
++        if (!loadedFromV320Cache) traceHiAIStage(diagnostics, "hiai_create_ir_buffer");
+@@ -1130,0 +1143 @@
++        if (!loadedFromV320Cache) traceHiAIStage(diagnostics, "hiai_create_ir_buffer", true, !createBufferSuc);
+@@ -1140,0 +1154 @@
++        if (!loadedFromV320Cache) traceHiAIStage(diagnostics, "hiai_build_ir");
+@@ -1141,0 +1156 @@
++        if (!loadedFromV320Cache) traceHiAIStage(diagnostics, "hiai_build_ir", true, !buildIRSuc);
+@@ -1154 +1169 @@
+-            mMgrClient = LoadModelSync(om_model_buff, modelName);
++            mMgrClient = LoadModelSync(om_model_buff, modelName, diagnostics);
+@@ -1184,0 +1200 @@
++        traceHiAIStage(diagnostics, "hiai_tensor_setup");
+@@ -1185,0 +1202 @@
++        traceHiAIStage(diagnostics, "hiai_tensor_setup", true, result);
+@@ -1363,5 +1380,7 @@
+-            if (!loadHiAIDynamicSymbols(loaderScope,
+-                                        explicitlyRequestedHiAI &&
+-                                            !useHclV600,
+-                                        runtimeLibraryDirectory,
+-                                        &loaderError)) {
++            auto* diagnostics = options->diagnostics;
++            traceHiAIStage(diagnostics, "hiai_client_symbols");
++            const bool loaded = loadHiAIDynamicSymbols(loaderScope,
++                                                        explicitlyRequestedHiAI && !useHclV600,
++                                                        runtimeLibraryDirectory, &loaderError);
++            traceHiAIStage(diagnostics, "hiai_client_symbols", true, !loaded);
++            if (!loaded) {
+@@ -1386,0 +1406 @@
++                traceHiAIStage(diagnostics, "hiai_client_create");
+@@ -1387,0 +1408 @@
++                traceHiAIStage(diagnostics, "hiai_client_create", true, mgrClient == nullptr);
+@@ -1393 +1414,3 @@
+-				auto ret = mgrClient->Init(nullptr);
++                traceHiAIStage(diagnostics, "hiai_client_init");
++                auto ret = mgrClient->Init(nullptr);
++                traceHiAIStage(diagnostics, "hiai_client_init", true, ret);
+@@ -1398,0 +1422 @@
++                traceHiAIStage(diagnostics, "hiai_client_version");
+@@ -1399,0 +1424 @@
++                traceHiAIStage(diagnostics, "hiai_client_version", true, currentversion == nullptr);

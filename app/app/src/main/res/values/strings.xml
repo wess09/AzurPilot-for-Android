@@ -699,6 +699,7 @@
     <string name="device_report_test_required">请实际测试后，选择使用结果再提交。</string>
     <string name="ocr_title">OCR 加速</string>
     <string name="ocr_hardware_acceleration">使用硬件加速</string>
+    <string name="ocr_retry_npu">清除 NPU 禁用记录并重试</string>
     <string name="ocr_hardware_acceleration_hint">默认开启。关闭后使用 CPU；开启后仅在硬件运行出错或不支持时回退，分数差不触发回退。</string>
     <string name="ocr_user_disabled">已关闭硬件加速，使用 CPU</string>
     <string name="ocr_score_difference">最大分数差（仅供参考）</string>

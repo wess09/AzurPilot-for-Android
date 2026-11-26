@@ -87,12 +87,18 @@ class OcrDiagnosticsViewModel(private val server: OcrServer, private val host: P
      *
      * Tests model and AP serially, distinguishing CPU and NPU.
      */
-    fun test() {
+    fun test() = runTest(resetFailures = false)
+
+    /** 清除禁用记录并测试当前模型。 / Clears acceleration gates and tests the selected model. */
+    fun retryHardwareAcceleration() = runTest(resetFailures = true)
+
+    private fun runTest(resetFailures: Boolean) {
         val hash = state.value.selectedHash
         if (state.value.testing || state.value.refreshing || state.value.updating || hash.isEmpty()) return
         state.update { it.copy(testing = true, modelTest = null, apTest = null, error = null) }
         viewModelScope.launch(AppDispatchers.IO) {
             try {
+                if (resetFailures) server.resetHardwareFailures()
                 val model = server.test(hash)
                 state.update { it.copy(modelTest = model) }
                 val integration = if (host.state.value.phase == ProotPhase.RUNNING) {

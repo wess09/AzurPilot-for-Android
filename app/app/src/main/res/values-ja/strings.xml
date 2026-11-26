@@ -690,6 +690,7 @@
     <string name="device_report_test_required">実際に動作を確認してから、使用結果を選んで送信してください。</string>
     <string name="ocr_title">OCR アクセラレーション</string>
     <string name="ocr_hardware_acceleration">ハードウェアアクセラレーションを使用</string>
+    <string name="ocr_retry_npu">NPU の無効化記録を消去して再試行</string>
     <string name="ocr_hardware_acceleration_hint">初期設定はオン。オフでは CPU を使用します。オンでは実行エラーや未対応の場合のみ CPU に切り替え、スコア差では切り替えません。</string>
     <string name="ocr_user_disabled">アクセラレーションはオフ、CPU を使用</string>
     <string name="ocr_score_difference">最大スコア差（参考値）</string>

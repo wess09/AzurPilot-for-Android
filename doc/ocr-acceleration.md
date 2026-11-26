@@ -99,13 +99,18 @@ C 模型 API。诊断桥按该钉版布局读取首成员 `LiteRtModel`，仅接
 条件，并检查 8/9 SDK 选择；它不验证 Android 驱动。
 
 首次初始化和校验阶段同步保存到启动器日志的 `debug/ocr/stages.jsonl`，复制 OCR 报告
-也会包含 `last_stage`。导出启动器日志时额外收集 Android 11+ 的进程退出原因；
+也会包含 `last_stage`。
+HiAI 记录客户端初始化、会话创建、IR 构建、V320 就绪确认和首次推理。`begin` 表示已进入调用，
+`return` 带返回码。只返回布尔值的 SDK 接口记录 `0` 表示成功，`1` 表示失败。
+导出启动器日志时额外收集 Android 11+ 的进程退出原因。
 Android 12+ 如仍保留原生 tombstone，则附带 `debug/process-exits/trace_*.pb`。
 系统可能已清除堆栈，空缺不能据此排除原生崩溃。原生信号仍不能被 Kotlin 异常捕获，
 因此所有推理库放在 `:ocr` 进程。工作进程退出后，主进程记录当前模型并重新绑定，
-该模型改用 CPU；无法确定模型时暂禁全部 NPU。禁用记录持续到 APK 版本升级，避免
-重启再次触发同一崩溃。若退出摘要或匹配的最后阶段表明正在执行 CPU 路径，主进程仅采集
-日志并重绑，不新增 NPU 禁用记录。AP 和 App 测试使用同一回环 API，连接中断后允许重试一次。
+该模型改用 CPU；无法确定模型时暂禁全部 NPU。禁用记录持续到主动重试或更新 APK，避免
+重启再次触发同一崩溃。在 **设置 → OCR 加速** 打开硬件加速并选择支持加速的模型，点
+**清除 NPU 禁用记录并重试** 可清除记录并测试当前模型。若退出摘要或匹配的最后阶段表明
+正在执行 CPU 路径，主进程仅采集日志并重绑，不新增 NPU 禁用记录。
+AP 和 App 测试使用同一回环 API，连接中断后允许重试一次。
 
 MT6985 的 1.2.103 日志已通过 adapter 选择和编译调用，没有新增原生崩溃，但两个
 测试模型仍因「没有分区」使用 CPU。这份日志缺少厂商编译错误，尚不能确定具体
@@ -427,13 +432,18 @@ legacy MGVI overriding the bundled SDK and missing entries, and check SDK 8/9 se
 These checks do not validate Android vendor drivers.
 
 Initialization and first validation stages are flushed to launcher logs at
-`debug/ocr/stages.jsonl`; copied OCR reports include `last_stage`. Launcher exports also
+`debug/ocr/stages.jsonl`; copied OCR reports include `last_stage`.
+HiAI records client initialization, session creation, IR builds, V320 readiness, and the first
+inference. `begin` marks entry and `return` includes the result code. Boolean SDK results
+are recorded as `0` for success or `1` for failure. Launcher exports also
 collect process exit reasons on Android 11+. If Android 12+ still retains a native tombstone,
 the export includes `debug/process-exits/trace_*.pb`. Missing traces do not rule out native
 crashes because the system may have discarded them. Kotlin cannot catch native signals,
 so all inference libraries run in `:ocr`. After worker death, the main process records the
 active model and rebinds with CPU recovery for that model, or all NPU models if unknown.
-Gates persist until an APK version upgrade to prevent repeating the crash after restart.
+Gates persist until a manual retry or an APK upgrade to prevent repeating a crash after restart.
+With hardware acceleration on and an eligible model selected, **Clear NPU failures and retry**
+in **Settings → OCR acceleration** clears the gates and tests that model.
 If the exit summary or matching last stage identifies the CPU path, the host collects logs and
 rebinds without adding an NPU gate.
 AP and in-app tests use the same loopback API and retry a broken connection once.

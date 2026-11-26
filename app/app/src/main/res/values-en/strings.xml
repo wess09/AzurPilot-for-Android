@@ -700,6 +700,7 @@
     <string name="device_report_test_required">Test the app first, then select the actual result before submitting.</string>
     <string name="ocr_title">OCR acceleration</string>
     <string name="ocr_hardware_acceleration">Use hardware acceleration</string>
+    <string name="ocr_retry_npu">Clear NPU failures and retry</string>
     <string name="ocr_hardware_acceleration_hint">On by default. Off uses CPU. When on, runtime errors or unsupported requests fall back to CPU; score differences do not.</string>
     <string name="ocr_user_disabled">Hardware acceleration is off; using CPU</string>
     <string name="ocr_score_difference">Maximum score difference (reference only)</string>

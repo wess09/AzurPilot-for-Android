@@ -113,6 +113,14 @@ class OcrEngine(
         trace.record("*", "hardware_acceleration_setting", enabled.toString())
     }
 
+    /** 清除当前工作进程的加速失败记录。 / Clears the current worker's acceleration failures. */
+    @Synchronized
+    fun resetHardwareFailures() {
+        failures.clear()
+        gpuSoftmaxFailure = null
+        trace.record("*", "hardware_failures_reset")
+    }
+
     /**
      * 返回运行库、会话和回退原因；JIT 分区证据不代替硬件性能分析。
      *
@@ -160,6 +168,7 @@ class OcrEngine(
         val recognizers = models.filterValues { it["npu_supported"]?.jsonPrimitive?.boolean == true }.keys
         val disabled = recognizers.count { it in failures || "*" in failures }
         put("npu_libraries_bundled", bundled)
+        put("npu_retry_available", failures.isNotEmpty())
         // 兼容已有 AP 客户端；此字段只表示库存在，实际运行证据在 sessions 中。
         put("npu_libraries_ready", bundled)
         put("npu_state", when {
@@ -638,10 +647,12 @@ class OcrEngine(
         session.softmaxMs = null
         session.gpuRenderer = null
         val expectedShape = conversion.getValue("output_shape").jsonArray.map { it.jsonPrimitive.long }.toLongArray()
+        val hash = session.spec.getValue("sha256").jsonPrimitive.content
+        val stageTrace = OcrHiaiNative.StageTrace(trace, hash)
         if (session.hiai == 0L) {
-            trace.record(session.spec.getValue("sha256").jsonPrimitive.content, "hiai_model_load")
+            trace.record(hash, "hiai_model_prepare")
             session.hiai = OcrHiaiNative.create(materialize(conversion).absolutePath,
-                context.applicationInfo.nativeLibraryDir, expectedShape.last().toInt())
+                context.applicationInfo.nativeLibraryDir, expectedShape.last().toInt(), stageTrace)
             check(session.hiai != 0L) { "HiAI did not create an NPU session" }
         }
         val sampleSize = expectedShape.fold(1L, Long::times).toInt()
@@ -651,7 +662,7 @@ class OcrEngine(
         val inputSize = 3 * 48 * 320
         repeat(batch) { index ->
             val result = OcrHiaiNative.run(session.hiai,
-                values.copyOfRange(index * inputSize, (index + 1) * inputSize))
+                values.copyOfRange(index * inputSize, (index + 1) * inputSize), stageTrace)
             require(result.size == sampleSize && result.all(Float::isFinite))
             result.copyInto(output, index * sampleSize)
         }

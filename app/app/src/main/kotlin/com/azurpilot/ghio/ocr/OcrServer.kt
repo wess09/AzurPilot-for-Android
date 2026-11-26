@@ -83,6 +83,15 @@ class OcrServer(private val context: Context, private val settings: AppSettingsM
     }
 
     /**
+     * 在 IO 线程清除宿主与工作进程的禁用记录，保留加速开关。
+     *
+     * Clears host and worker gates on IO while respecting the saved acceleration setting.
+     */
+    fun resetHardwareFailures() {
+        synchronized(settingsLock) { request("reset_hardware_failures") }
+    }
+
+    /**
      * 幂等绑定并等待就绪，仅允许工作线程调用。
      *
      * Binds idempotently and waits for readiness on workers only.
@@ -157,14 +166,21 @@ class OcrServer(private val context: Context, private val settings: AppSettingsM
     }
 
     private fun request(method: String, hash: String? = null, enabled: Boolean? = null): JsonObject {
+        val resetsRecovery = method == "reset_hardware_failures"
         repeat(2) { attempt ->
             start()
-            val binding = synchronized(lock) { Triple(connection, worker, boundAt) }
+            val binding = synchronized(lock) {
+                if (resetsRecovery) {
+                    check(worker?.isBinderAlive == true) { "OCR worker could not start" }
+                    recovery.clear()
+                }
+                Triple(connection, worker, boundAt)
+            }
             try {
                 Socket().use { client ->
                     client.connect(InetSocketAddress("127.0.0.1", PORT), 3_000)
                     client.soTimeout = if (method in setOf("test", "test_cpu", "test_mixed", "test_gpu_softmax",
-                        "set_hardware_acceleration")) 240_000 else 15_000
+                        "set_hardware_acceleration", "reset_hardware_failures")) 240_000 else 15_000
                     val header = buildJsonObject {
                         put("method", method)
                         put("token", AndroidControlAuth.get(context))
@@ -197,7 +213,8 @@ class OcrServer(private val context: Context, private val settings: AppSettingsM
                 }
                 val dead = binding.second?.isBinderAlive == false
                 if (dead) binding.first?.let { lost(it, binding.third, true) }
-                if (!dead || attempt == 1) throw error
+                // 重试清除命令可能抹去此次退出刚留下的记录。
+                if (!dead || attempt == 1 || resetsRecovery) throw error
                 Timber.w("OCR worker connection lost; retrying with CPU recovery")
             }
         }

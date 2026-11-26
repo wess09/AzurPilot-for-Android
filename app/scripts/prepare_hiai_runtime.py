@@ -30,6 +30,7 @@ LEGACY_ABI_ENTRIES = ["_ZN2ge5ShapeC1ENSt6__ndk16vectorIxNS1_9allocatorIxEEEE",
                     "_ZN2ge6Tensor7SetDataEPKhj",
                     "_ZN2ge9AttrValue10CreateFromERKNSt6__ndk16vectorIxNS1_9allocatorIxEEEE",
                     "_ZN2ge9AttrValue10CreateFromEx"]
+TRACE_PATCH = Path(__file__).resolve().with_name("patches") / "mnn-hiai-stage-trace.patch"
 
 
 def git(repo, *arguments):
@@ -41,7 +42,8 @@ def prepare():
     """准备源码、库与来源清单。 / Prepares sources, libraries, and their provenance manifest."""
     source = OUTPUT / "sources/mnn"
     marker = source / ".ocr-hiai-version"
-    version = f"{MNN_COMMIT}:{HIAI_COMMIT}:arm64-abi-v3"
+    patch_checksum = hashlib.sha256(TRACE_PATCH.read_bytes()).hexdigest()
+    version = f"{MNN_COMMIT}:{HIAI_COMMIT}:arm64-abi-v3:{patch_checksum}"
     runtime_manifest = OUTPUT / "assets/ocr/hiai-runtime.json"
     if marker.is_file() and marker.read_text() == version and runtime_manifest.is_file():
         cached = json.loads(runtime_manifest.read_text())
@@ -78,6 +80,11 @@ def prepare():
             target = source / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(archive.read(name))
+    repo_root = Path(__file__).resolve().parents[2]
+    # 源码来自上面已校验哈希的归档，补丁只保留改动行以避开上游行尾空白。
+    subprocess.run(["git", "apply", "--unidiff-zero",
+                    f"--directory={source.relative_to(repo_root).as_posix()}",
+                    str(TRACE_PATCH)], cwd=repo_root, check=True)
     prefix = "HiAICLS/app/src/main/jni/"
     names = git(repo, "ls-tree", "-r", "--name-only", HIAI_COMMIT, prefix).decode().splitlines()
     for name in names:

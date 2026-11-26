@@ -11,11 +11,11 @@ import java.io.File
 /**
  * 在宿主保存工作进程失败的模型记录，防止同一 APK 反复触发原生崩溃。
  *
- * 仅宿主读写 preferences，绑定 Intent 向工作进程传递快照；升级 APK 后清除记录。
+ * 仅宿主读写 preferences，绑定 Intent 向工作进程传递快照。主动重试或更新 APK 清除记录。
  *
  * Stores failed worker model gates in the host to prevent repeated native crashes in one APK.
- * Only the host reads/writes preferences; bind intents carry snapshots to workers. APK upgrades
- * clear the gates.
+ * Only the host reads/writes preferences. Bind intents carry snapshots to workers. Manual retry
+ * and APK upgrades clear the gates.
  */
 internal class OcrWorkerRecovery(private val context: Context) {
     private val trace = OcrTrace(context)
@@ -30,6 +30,15 @@ internal class OcrWorkerRecovery(private val context: Context) {
     /** 返回不含口令的禁用模型快照。 / Returns a disabled-model snapshot without tokens. */
     @Synchronized
     fun snapshot(): String = JsonObject(disabled.mapValues { JsonPrimitive(it.value) }).toString()
+
+    /** 在 IO 线程持久化清除禁用记录。 / Clears persistent gates on IO. */
+    @Synchronized
+    fun clear() {
+        check(prefs.edit().remove("models").remove("version").commit()) {
+            "Could not clear OCR hardware failure records"
+        }
+        disabled.clear()
+    }
 
     /**
      * 根据退出摘要或匹配阶段记录硬件故障；CPU 路径的退出仅采集日志。在 IO 线程调用。
@@ -69,7 +78,7 @@ internal class OcrWorkerRecovery(private val context: Context) {
         } else {
             val location = phase?.takeUnless { it.isBlank() || it == "litert_cpu_compile" }
                 ?.take(80) ?: "an unknown stage"
-            disabled[hash] = "Native OCR worker exited near $location; NPU disabled until APK update"
+            disabled[hash] = "Native OCR worker exited near $location. NPU disabled until retry or APK update."
             prefs.edit().putInt("version", BuildConfig.VERSION_CODE).putString("models", snapshot()).commit()
             Timber.w("OCR worker exited; CPU recovery enabled for %s", hash.take(12))
         }

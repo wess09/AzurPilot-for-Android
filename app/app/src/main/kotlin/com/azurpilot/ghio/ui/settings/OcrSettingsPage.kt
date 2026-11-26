@@ -61,6 +61,9 @@ fun OcrSettingsPage(
     }
     val status = state.status
     val models = status?.get("model_status")?.jsonArray?.map { it.jsonObject }.orEmpty()
+    val selectedSupportsNpu = models.any {
+        it.text("model_sha256") == state.selectedHash && it.flag("npu_supported")
+    }
     SettingsSubPage(
         titleRes = R.string.ocr_title,
         onBack = onBack,
@@ -78,6 +81,16 @@ fun OcrSettingsPage(
                 )
             }
             OcrHint(stringResource(R.string.ocr_hardware_acceleration_hint))
+            if (status.flag("npu_retry_available")) {
+                TextButton(
+                    onClick = viewModel::retryHardwareAcceleration,
+                    enabled = status.flag("hardware_acceleration_enabled") &&
+                        status.flag("npu_libraries_ready") && !state.testing &&
+                        !state.refreshing && !state.updating && selectedSupportsNpu,
+                ) {
+                    AppActionLabel(AppSymbol.Refresh, stringResource(R.string.ocr_retry_npu))
+                }
+            }
             if (state.updating) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
         AppCard {

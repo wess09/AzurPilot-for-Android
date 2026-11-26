@@ -111,6 +111,10 @@ internal class OcrWorkerServer(
                             engine.setHardwareAcceleration(request.getValue("enabled").jsonPrimitive.boolean)
                             send(output, buildJsonObject { put("ok", true); put("status", engine.status()) })
                         }
+                        "reset_hardware_failures" -> withInferenceBuffers {
+                            engine.resetHardwareFailures()
+                            send(output, buildJsonObject { put("ok", true) })
+                        }
                         "test" -> withInferenceBuffers {
                             val result = engine.test(request.getValue("model_sha256").jsonPrimitive.content)
                             send(output, buildJsonObject { put("ok", true); put("result", result) })
