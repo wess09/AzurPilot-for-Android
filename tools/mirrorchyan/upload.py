@@ -11,12 +11,26 @@ from datetime import datetime
 from urllib.parse import urlsplit
 
 import requests
+from requests_toolbelt import MultipartEncoder
 
 BASE = "mirrorchyan.com"
 
 
 def log(msg: object) -> None:
     print(f"{datetime.now()} | {msg}")
+
+
+def describe(error: BaseException) -> str:
+    """沿异常链列出类型名，不带可能含临时存储链接的消息。"""
+    names = []
+    seen = set()
+    current = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        names.append(type(current).__name__)
+        nested = [arg for arg in current.args if isinstance(arg, BaseException)]
+        current = nested[0] if nested else current.__cause__ or current.__context__
+    return " <- ".join(names)
 
 
 def get_suffix(path):
@@ -53,9 +67,10 @@ def upload(rid: str, file: str, data: dict, headers: dict, download_name: str) -
         return False
 
     with open(file, "rb") as source:
-        response_2 = requests.post(
-            host,
-            data={
+        # 发送请求体时套接字用的是连接超时；files= 会把整个文件拼成一次写入，
+        # 10 秒内传不完就会中断。流式分块发送后，连接超时只限制单块写入的停顿。
+        body = MultipartEncoder(
+            fields={
                 "success_action_status": "200",
                 "name": response_1_data["name"],
                 "signature": response_1_data["signature"],
@@ -63,8 +78,14 @@ def upload(rid: str, file: str, data: dict, headers: dict, download_name: str) -
                 "policy": response_1_data["policy"],
                 "OSSAccessKeyId": response_1_data["access_key"],
                 "Content-Disposition": f'attachment; filename="{download_name}"',
-            },
-            files={"file": source},
+                # OSS PostObject 要求 file 是最后一个表单域。
+                "file": (ospkg.path.basename(file), source),
+            }
+        )
+        response_2 = requests.post(
+            host,
+            data=body,
+            headers={"Content-Type": body.content_type},
             verify=True,
             allow_redirects=False,
             timeout=(10, 300),
@@ -166,7 +187,7 @@ def main():
             uploaded = upload(rid, file, data, headers, download_name)
         except (OSError, KeyError, TypeError, ValueError) as error:
             # 传输异常可能包含临时存储链接，日志只保留异常类型。
-            log(f"upload failed: {type(error).__name__}")
+            log(f"upload failed: {describe(error)}")
             uploaded = False
         if uploaded:
             done = True
