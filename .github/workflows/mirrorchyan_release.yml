@@ -63,7 +63,7 @@ jobs:
         run: |
           cp tools/mirrorchyan/upload.py mirrorchyan_uploading.py
           test -s mirrorchyan_uploading.py
-          python -m pip install requests
+          python -m pip install requests requests-toolbelt
       - uses: MirrorChyan/uploading-action@4230465d8cf5331da0523a3551518e1a88fe666b # v1
         with:
           filetype: local
